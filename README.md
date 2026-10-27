@@ -14,7 +14,7 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 1. Open this folder with Unity 6.0 (6000.0) or a compatible later Unity 6 editor. Let Package Manager resolve the packages.
 2. Switch the build target to Android.
 3. In Edit > Project Settings > XR Plug-in Management, install XR Plug-in Management if Unity asks, then enable ARCore for Android.
-4. Choose Tools > AR Coin Drive > Create Demo Scene. The generated scene is Assets/Scenes/ARCoinDriveDemo.unity.
+4. Choose Tools > AR Coin Drive > Create Demo Scene. This creates Assets/Scenes/ARCoinDriveDemo.unity and sets Android minimum API level to 24.
 5. Connect an ARCore-compatible Android phone, enable USB debugging, and build/run. The Unity Editor does not provide live AR camera tracking.
 6. Slowly move the phone to scan a textured, well-lit floor, tap the detected floor, then use the arrow and GO controls.
 
