@@ -30,4 +30,4 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 
 - com.unity.xr.arfoundation 6.4.1
 - com.unity.xr.arcore 6.4.1
-- com.unity.xr.management 4.5.0
+- com.unity.xr.management 4.5.3
