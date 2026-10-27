@@ -82,7 +82,8 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
     private void SampleEnvironmentDepth()
     {
         var descriptor = _occlusionManager != null ? _occlusionManager.descriptor : null;
-        DepthSupported = descriptor != null && descriptor.supportsEnvironmentDepthImage;
+        DepthSupported = descriptor != null
+            && descriptor.environmentDepthImageSupported == Supported.Supported;
         if (!DepthSupported || _cameraManager == null || _camera == null
             || !_cameraManager.TryGetIntrinsics(out var intrinsics)
             || !_occlusionManager.TryAcquireEnvironmentDepthCpuImage(out var image))
