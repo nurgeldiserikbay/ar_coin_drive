@@ -29,9 +29,9 @@ public sealed class ARDemoController : MonoBehaviour
 
     private void Awake()
     {
-        _raycastManager = FindFirstObjectByType<ARRaycastManager>();
-        _planeManager = FindFirstObjectByType<ARPlaneManager>();
-        _depthDetector = FindFirstObjectByType<ARDepthObstacleDetector>();
+        _raycastManager = FindAnyObjectByType<ARRaycastManager>();
+        _planeManager = FindAnyObjectByType<ARPlaneManager>();
+        _depthDetector = FindAnyObjectByType<ARDepthObstacleDetector>();
     }
 
     private void Update()
