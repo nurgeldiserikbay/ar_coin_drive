@@ -1,7 +1,13 @@
 {
   "dependencies": {
-    "com.unity.xr.arfoundation": "6.4.1",
-    "com.unity.xr.arcore": "6.4.1",
-    "com.unity.xr.management": "4.5.3"
+    "com.unity.purchasing": "5.4.4",
+    "com.unity.xr.arcore": "6.6.2",
+    "com.unity.xr.arfoundation": "6.6.2",
+    "com.unity.xr.management": "4.7.0",
+    "com.unity.modules.adaptiveperformance": "1.0.0",
+    "com.unity.modules.physicscore2d": "1.0.0",
+    "com.unity.modules.tetgen": "1.0.0",
+    "com.unity.modules.timelinefoundation": "1.0.0",
+    "com.unity.modules.vectorgraphics": "1.0.0"
   }
 }
