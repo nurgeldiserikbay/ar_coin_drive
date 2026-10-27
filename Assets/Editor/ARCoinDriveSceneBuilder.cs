@@ -34,6 +34,9 @@ public static class ARCoinDriveSceneBuilder
         camera.clearFlags = CameraClearFlags.SolidColor;
         cameraObject.AddComponent<ARCameraManager>();
         cameraObject.AddComponent<ARCameraBackground>();
+        var occlusion = cameraObject.AddComponent<AROcclusionManager>();
+        occlusion.requestedEnvironmentDepthMode = EnvironmentDepthMode.Fastest;
+        cameraObject.AddComponent<ARDepthObstacleDetector>();
 
         var origin = originObject.AddComponent<XROrigin>();
         origin.Camera = camera;
