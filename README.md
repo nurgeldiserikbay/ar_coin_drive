@@ -22,7 +22,8 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 
 - This is a playable AR foundation check, not a finished game.
 - The play boundary is virtual and fixed at 1.5 m square.
-- Real furniture and arbitrary walls are not yet used for collision or pathfinding. Depth-based obstacle avoidance is a later feature and must be tested on supported devices.
+- The prototype also requests vertical plane detection and stops the car when its bumper probe enters a detected flat vertical plane. This can cover some walls and flat furniture faces; it is not general object recognition and will miss many obstacles.
+- Depth-based obstacle avoidance and richer geometry handling remain later features and require tests on supported phones.
 - The car and coins are procedural placeholder models intended to prove scale and interaction. Replace them with authored stylized assets during visual production.
 - The project has not been built or checked on a physical Android device in this environment.
 
