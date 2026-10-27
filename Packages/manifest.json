@@ -1,9 +1,12 @@
 {
   "dependencies": {
+    "com.unity.ai.assistant": "2.21.0-pre.2",
+    "com.unity.ai.inference": "2.6.1",
     "com.unity.purchasing": "5.4.4",
     "com.unity.xr.arcore": "6.6.2",
     "com.unity.xr.arfoundation": "6.6.2",
     "com.unity.xr.management": "4.7.0",
+    "com.unity.xr.openxr": "1.18.0",
     "com.unity.modules.adaptiveperformance": "1.0.0",
     "com.unity.modules.physicscore2d": "1.0.0",
     "com.unity.modules.tetgen": "1.0.0",

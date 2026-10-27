@@ -1,0 +1,8 @@
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/CMakeFiles/edit_cache.dir
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/CMakeFiles/rebuild_cache.dir
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/GameActivity/CMakeFiles/game.dir
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/GameActivity/CMakeFiles/edit_cache.dir
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/GameActivity/CMakeFiles/rebuild_cache.dir
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/FramePacing/CMakeFiles/swappywrapper.dir
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/FramePacing/CMakeFiles/edit_cache.dir
+D:/WORK/completed/24-ar_coin_drive/ar_coin_drive/.utmp/RelWithDebInfo/6637713c/arm64-v8a/FramePacing/CMakeFiles/rebuild_cache.dir
