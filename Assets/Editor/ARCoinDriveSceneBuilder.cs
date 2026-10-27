@@ -38,7 +38,7 @@ public static class ARCoinDriveSceneBuilder
         origin.CameraFloorOffsetObject = cameraOffset;
 
         var planes = originObject.AddComponent<ARPlaneManager>();
-        planes.requestedDetectionMode = PlaneDetectionMode.Horizontal;
+        planes.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
         originObject.AddComponent<ARRaycastManager>();
 
         var game = new GameObject("AR Coin Drive");
