@@ -90,9 +90,7 @@ public sealed class ARDemoController : MonoBehaviour
         _car.localRotation = Quaternion.Inverse(_arena.rotation) * worldRotation;
 
         SpawnCoins();
-        _message = "Drive with the arrows and collect the gold coins.";
-        if (_planeManager != null)
-            _planeManager.enabled = false;
+        _message = "Drive with the arrows and collect the gold coins. Flat vertical surfaces can stop the car.";
     }
 
     private void DriveCar()
@@ -102,11 +100,67 @@ public sealed class ARDemoController : MonoBehaviour
         var dt = Time.deltaTime;
         var localPosition = _car.localPosition;
         var localForward = _car.localRotation * Vector3.forward;
-        localPosition += localForward * (_forwardInput * DriveSpeed * dt);
-        localPosition.x = Mathf.Clamp(localPosition.x, -HalfArena + 0.12f, HalfArena - 0.12f);
-        localPosition.z = Mathf.Clamp(localPosition.z, -HalfArena + 0.12f, HalfArena - 0.12f);
-        _car.localPosition = localPosition;
+        var candidatePosition = localPosition + localForward * (_forwardInput * DriveSpeed * dt);
+        candidatePosition.x = Mathf.Clamp(candidatePosition.x, -HalfArena + 0.12f, HalfArena - 0.12f);
+        candidatePosition.z = Mathf.Clamp(candidatePosition.z, -HalfArena + 0.12f, HalfArena - 0.12f);
+
+        var blockedByWall = _forwardInput > 0f && IsBlockedByDetectedVerticalSurface(candidatePosition, localForward);
+        if (!blockedByWall)
+        {
+            _car.localPosition = candidatePosition;
+        }
+        else
+        {
+            _message = "A wall or flat vertical obstacle was detected. Turn to drive around it.";
+        }
+
         _car.localRotation = Quaternion.AngleAxis(_steerInput * TurnSpeed * dt, Vector3.up) * _car.localRotation;
+    }
+
+    private bool IsBlockedByDetectedVerticalSurface(Vector3 candidateCarPosition, Vector3 localForward)
+    {
+        if (_planeManager == null || _arena == null) return false;
+
+        // Probe slightly ahead of the car at bumper height. AR planes are geometric
+        // observations, so this only guards against flat surfaces the device has tracked.
+        var probeLocal = candidateCarPosition + localForward * 0.17f + Vector3.up * 0.07f;
+        var probeWorld = _arena.TransformPoint(probeLocal);
+
+        foreach (var plane in _planeManager.trackables)
+        {
+            if (plane == null || plane.alignment != PlaneAlignment.Vertical)
+                continue;
+
+            var planeLocal = plane.transform.InverseTransformPoint(probeWorld);
+            if (Mathf.Abs(planeLocal.y) > 0.12f)
+                continue;
+
+            if (IsPointInsidePlaneBoundary(plane, new Vector2(planeLocal.x, planeLocal.z)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsPointInsidePlaneBoundary(ARPlane plane, Vector2 point)
+    {
+        var boundary = plane.boundary;
+        if (!boundary.IsCreated || boundary.Length < 3)
+            return false;
+
+        var inside = false;
+        var previous = boundary.Length - 1;
+        for (var current = 0; current < boundary.Length; current++)
+        {
+            var a = boundary[current];
+            var b = boundary[previous];
+            var crosses = (a.y > point.y) != (b.y > point.y)
+                && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x;
+            if (crosses) inside = !inside;
+            previous = current;
+        }
+
+        return inside;
     }
 
     private void AnimateAndCollectCoins()
