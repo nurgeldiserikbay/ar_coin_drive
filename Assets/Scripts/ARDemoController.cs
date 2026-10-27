@@ -5,7 +5,7 @@ using UnityEngine.XR.ARSubsystems;
 
 /// <summary>
 /// First playable loop: scan and tap a horizontal surface, drive inside a bounded
-/// 1.5 m square, and collect coins. Real-room obstacle mapping is intentionally a later step.
+/// 1.5 m square, and collect coins. Real obstacle sensing is approximate and device-dependent.
 /// </summary>
 public sealed class ARDemoController : MonoBehaviour
 {
@@ -18,6 +18,7 @@ public sealed class ARDemoController : MonoBehaviour
 
     private ARRaycastManager _raycastManager;
     private ARPlaneManager _planeManager;
+    private ARDepthObstacleDetector _depthDetector;
     private Transform _arena;
     private Transform _car;
     private readonly List<Transform> _coins = new List<Transform>();
@@ -30,6 +31,7 @@ public sealed class ARDemoController : MonoBehaviour
     {
         _raycastManager = FindFirstObjectByType<ARRaycastManager>();
         _planeManager = FindFirstObjectByType<ARPlaneManager>();
+        _depthDetector = FindFirstObjectByType<ARDepthObstacleDetector>();
     }
 
     private void Update()
@@ -77,6 +79,9 @@ public sealed class ARDemoController : MonoBehaviour
         _arena.SetPositionAndRotation(pose.position + pose.up * 0.008f, pose.rotation);
 
         CreateBoundary();
+        if (_depthDetector != null)
+            _depthDetector.SetArena(_arena);
+
         var car = ProceduralCarFactory.CreateCar(_arena);
         _car = car.transform;
         _car.localPosition = Vector3.up * 0.01f;
@@ -104,14 +109,24 @@ public sealed class ARDemoController : MonoBehaviour
         candidatePosition.x = Mathf.Clamp(candidatePosition.x, -HalfArena + 0.12f, HalfArena - 0.12f);
         candidatePosition.z = Mathf.Clamp(candidatePosition.z, -HalfArena + 0.12f, HalfArena - 0.12f);
 
-        var blockedByWall = _forwardInput > 0f && IsBlockedByDetectedVerticalSurface(candidatePosition, localForward);
+        var blockedByWall = false;
+        if (_forwardInput > 0f)
+        {
+            var detectedPlane = IsBlockedByDetectedVerticalSurface(candidatePosition, localForward);
+            var candidateWorld = _arena.TransformPoint(candidatePosition);
+            var worldForward = _arena.TransformDirection(localForward);
+            var detectedDepthObstacle = _depthDetector != null
+                && _depthDetector.IsPathBlocked(candidateWorld, worldForward, 0.17f, 0.13f);
+            blockedByWall = detectedPlane || detectedDepthObstacle;
+        }
+
         if (!blockedByWall)
         {
             _car.localPosition = candidatePosition;
         }
         else
         {
-            _message = "A wall or flat vertical obstacle was detected. Turn to drive around it.";
+            _message = "An obstacle was sensed nearby. Turn to drive around it.";
         }
 
         _car.localRotation = Quaternion.AngleAxis(_steerInput * TurnSpeed * dt, Vector3.up) * _car.localRotation;
@@ -233,6 +248,7 @@ public sealed class ARDemoController : MonoBehaviour
         if (_arena != null) Destroy(_arena.gameObject);
         _arena = null;
         _car = null;
+        _depthDetector?.SetArena(null);
         _coins.Clear();
         _score = 0;
         if (_planeManager != null) _planeManager.enabled = true;
