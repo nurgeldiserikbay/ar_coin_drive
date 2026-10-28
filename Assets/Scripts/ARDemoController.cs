@@ -78,7 +78,7 @@ public sealed class ARDemoController : MonoBehaviour
         for (var i = 0; i < RaycastHits.Count; i++)
         {
             var hitPlane = RaycastHits[i].trackable as ARPlane;
-            if (hitPlane != null && hitPlane.alignment == PlaneAlignment.Horizontal)
+            if (hitPlane != null && hitPlane.alignment == PlaneAlignment.HorizontalUp)
             {
                 floorHitIndex = i;
                 break;
