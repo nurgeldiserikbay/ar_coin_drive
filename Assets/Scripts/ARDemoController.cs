@@ -249,8 +249,8 @@ public sealed class ARDemoController : MonoBehaviour
         _obstaclePositions.Clear();
         var positions = new[]
         {
-            new Vector2(-0.20f, 0.04f),
-            new Vector2(0.02f, -0.08f),
+            new Vector2(-0.18f, 0.12f),
+            new Vector2(0.20f, -0.10f),
             new Vector2(0.43f, 0.40f)
         };
         var colors = new[]
