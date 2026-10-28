@@ -8,7 +8,7 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 - Editor menu command that generates the AR session, camera rig, visible translucent plane mesh, horizontal and vertical plane detection, raycast and occlusion managers, and demo scene.
 - Optional environment-depth sampling that can stop the car near visible obstacles on supported devices.
 - Procedural lightweight car and coin models; no third-party model download is required for the first test.
-- Touch steering with forward and reverse, a guided coin route, three virtual toy barriers, reset button, virtual area boundaries, translucent detected-plane visualization, and an AR tracking/depth diagnostic readout.
+- Touch steering with forward and reverse, a guided coin route, three virtual toy barriers, reset button, virtual area boundaries, translucent detected-plane visualization, and an AR tracking, camera-frame, plane, anchor, and depth diagnostic readout.
 
 ## Open and run
 
