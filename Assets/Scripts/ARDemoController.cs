@@ -430,11 +430,15 @@ public sealed class ARDemoController : MonoBehaviour
             : _depthDetector.HasDepthFrame ? "ready" : "waiting";
         var anchorState = _anchor == null ? "none" : _anchor.trackingState.ToString();
         var trackingStatus = "AR: " + ARSession.state + " (" + ARSession.notTrackingReason
-            + ")  •  frames: " + _cameraFrameCount + "  •  planes: " + planeCount
-            + "  •  anchor: " + anchorState + "  •  depth: " + depthState;
+            + ")  •  camera frames: " + _cameraFrameCount;
+        var featureStatus = "Planes: " + planeCount + "  •  anchor: " + anchorState
+            + "  •  depth: " + depthState;
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 64f * scale,
-            Screen.width - margin * 3f, 24f * scale), trackingStatus,
-            MakeLabelStyle(10f * scale, false));
+            Screen.width - margin * 3f, 18f * scale), trackingStatus,
+            MakeLabelStyle(9f * scale, false));
+        GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 82f * scale,
+            Screen.width - margin * 3f, 18f * scale), featureStatus,
+            MakeLabelStyle(9f * scale, false));
 
         if (_arena == null) return;
 
