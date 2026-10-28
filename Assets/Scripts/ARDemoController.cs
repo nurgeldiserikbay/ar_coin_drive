@@ -22,6 +22,7 @@ public sealed class ARDemoController : MonoBehaviour
     private Transform _arena;
     private Transform _car;
     private readonly List<Transform> _coins = new List<Transform>();
+    private readonly List<Vector2> _obstaclePositions = new List<Vector2>();
     private int _score;
     private float _driveInput;
     private float _steerInput;
@@ -111,6 +112,7 @@ public sealed class ARDemoController : MonoBehaviour
         var worldRotation = Quaternion.LookRotation(forward.normalized, pose.up);
         _car.localRotation = Quaternion.Inverse(_arena.rotation) * worldRotation;
 
+        SpawnObstacles();
         SpawnCoins();
         _message = "Use arrows to steer, GO to drive forward and BACK to reverse.";
     }
@@ -132,11 +134,12 @@ public sealed class ARDemoController : MonoBehaviour
         if (Mathf.Abs(_driveInput) > 0.01f)
         {
             var detectedPlane = IsBlockedByDetectedVerticalSurface(candidatePosition, travelDirection);
+            var virtualObstacle = IsBlockedByVirtualObstacle(candidatePosition);
             var candidateWorld = _arena.TransformPoint(candidatePosition);
             var worldTravelDirection = _arena.TransformDirection(travelDirection);
             var detectedDepthObstacle = _depthDetector != null
                 && _depthDetector.IsPathBlocked(candidateWorld, worldTravelDirection, 0.19f, 0.12f);
-            blockedByWall = detectedPlane || detectedDepthObstacle;
+            blockedByWall = detectedPlane || virtualObstacle || detectedDepthObstacle;
         }
 
         if (!blockedByWall)
@@ -149,6 +152,18 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         _car.localRotation = Quaternion.AngleAxis(_steerInput * TurnSpeed * dt, Vector3.up) * _car.localRotation;
+    }
+
+    private bool IsBlockedByVirtualObstacle(Vector3 candidatePosition)
+    {
+        var candidate = new Vector2(candidatePosition.x, candidatePosition.z);
+        for (var i = 0; i < _obstaclePositions.Count; i++)
+        {
+            if (Vector2.Distance(candidate, _obstaclePositions[i]) < 0.17f)
+                return true;
+        }
+
+        return false;
     }
 
     private bool IsBlockedByDetectedVerticalSurface(Vector3 candidateCarPosition, Vector3 localTravelDirection)
@@ -229,6 +244,31 @@ public sealed class ARDemoController : MonoBehaviour
         }
     }
 
+    private void SpawnObstacles()
+    {
+        _obstaclePositions.Clear();
+        var positions = new[]
+        {
+            new Vector2(-0.20f, 0.04f),
+            new Vector2(0.02f, -0.08f),
+            new Vector2(0.43f, 0.40f)
+        };
+        var colors = new[]
+        {
+            new Color(0.12f, 0.72f, 0.86f),
+            new Color(0.98f, 0.46f, 0.18f),
+            new Color(0.43f, 0.78f, 0.28f)
+        };
+
+        for (var i = 0; i < positions.Length; i++)
+        {
+            var position = positions[i];
+            _obstaclePositions.Add(position);
+            ProceduralCarFactory.CreateObstacle(_arena,
+                new Vector3(position.x, 0f, position.y), colors[i]);
+        }
+    }
+
     private void SpawnCoins()
     {
         _coins.Clear();
@@ -277,6 +317,7 @@ public sealed class ARDemoController : MonoBehaviour
         _car = null;
         _depthDetector?.SetArena(null);
         _coins.Clear();
+        _obstaclePositions.Clear();
         _score = 0;
         if (_planeManager != null) _planeManager.enabled = true;
         _message = "Move your phone slowly to scan the floor, then tap the floor.";
