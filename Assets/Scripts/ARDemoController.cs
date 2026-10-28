@@ -396,8 +396,13 @@ public sealed class ARDemoController : MonoBehaviour
     {
         var scale = Mathf.Clamp(Screen.width / 420f, 0.8f, 1.35f);
         var margin = 16f * scale;
-        var topHeight = 108f * scale;
+        var topHeight = 120f * scale;
+        var previousGuiColor = GUI.color;
+        var previousContentColor = GUI.contentColor;
+        GUI.color = new Color(0.025f, 0.075f, 0.11f, 0.88f);
         GUI.Box(new Rect(margin, margin, Screen.width - margin * 2f, topHeight), "");
+        GUI.color = previousGuiColor;
+        GUI.contentColor = Color.white;
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f, Screen.width - margin * 3f, 24f * scale),
             "AR COIN DRIVE  •  COINS " + _score + "/" + CoinCount, MakeLabelStyle(20f * scale, true));
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 27f * scale, Screen.width - margin * 3f, 32f * scale),
@@ -422,18 +427,27 @@ public sealed class ARDemoController : MonoBehaviour
         _steerInput = 0f;
         _driveInput = 0f;
 
+        GUI.color = new Color(0.04f, 0.62f, 0.72f, 0.92f);
+        GUI.contentColor = Color.white;
         if (GUI.RepeatButton(new Rect(margin, y, buttonWidth, buttonHeight), "◀"))
             _steerInput = -1f;
         if (GUI.RepeatButton(new Rect(margin + buttonWidth + 8f * scale, y, buttonWidth, buttonHeight), "▶"))
             _steerInput = 1f;
+
         var goRect = new Rect(Screen.width - buttonWidth - margin, y, buttonWidth, buttonHeight);
         var backRect = new Rect(goRect.x - buttonWidth - 8f * scale, y, buttonWidth, buttonHeight);
+        GUI.color = new Color(0.08f, 0.67f, 0.34f, 0.96f);
         if (GUI.RepeatButton(goRect, "GO"))
             _driveInput = 1f;
+        GUI.color = new Color(0.86f, 0.48f, 0.12f, 0.94f);
         if (GUI.RepeatButton(backRect, "BACK"))
             _driveInput = -0.65f;
+        GUI.color = new Color(0.12f, 0.18f, 0.23f, 0.88f);
         if (GUI.Button(new Rect(goRect.x, y - buttonHeight - 10f * scale, buttonWidth, 42f * scale), "RESET"))
             ResetGame();
+
+        GUI.color = previousGuiColor;
+        GUI.contentColor = previousContentColor;
     }
 
     private static GUIStyle MakeLabelStyle(float fontSize, bool bold)
