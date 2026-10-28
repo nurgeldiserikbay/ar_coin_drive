@@ -90,6 +90,7 @@ public static class ARCoinDriveSceneBuilder
         cameraObject.AddComponent<ARCameraBackground>();
         var occlusion = cameraObject.AddComponent<AROcclusionManager>();
         occlusion.requestedEnvironmentDepthMode = EnvironmentDepthMode.Fastest;
+        occlusion.requestedOcclusionPreferenceMode = OcclusionPreferenceMode.PreferEnvironmentOcclusion;
         cameraObject.AddComponent<ARDepthObstacleDetector>();
 
         var origin = originObject.AddComponent<XROrigin>();
