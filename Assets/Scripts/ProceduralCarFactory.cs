@@ -37,6 +37,22 @@ public static class ProceduralCarFactory
         return root;
     }
 
+    public static GameObject CreateObstacle(Transform parent, Vector3 localPosition, Color color)
+    {
+        var root = new GameObject("Toy Barrier");
+        root.transform.SetParent(parent, false);
+        root.transform.localPosition = localPosition;
+
+        var body = MakeMaterial(color);
+        var accent = MakeMaterial(Color.Lerp(color, Color.white, 0.48f));
+        Part(root.transform, PrimitiveType.Cube, "Barrier Body", new Vector3(0f, 0.055f, 0f),
+            new Vector3(0.15f, 0.11f, 0.15f), body, Quaternion.identity);
+        Part(root.transform, PrimitiveType.Cube, "Top Accent", new Vector3(0f, 0.115f, 0f),
+            new Vector3(0.12f, 0.02f, 0.12f), accent, Quaternion.identity);
+        DisableColliders(root);
+        return root;
+    }
+
     public static GameObject CreateCoin(Transform parent, Vector3 localPosition)
     {
         var root = new GameObject("Coin");
