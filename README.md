@@ -8,14 +8,14 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 - Editor menu command that generates the AR session, camera rig, visible translucent plane mesh, horizontal and vertical plane detection, raycast and occlusion managers, and demo scene.
 - Optional environment-depth sampling that can stop the car near visible obstacles on supported devices.
 - Procedural lightweight car and coin models; no third-party model download is required for the first test.
-- Touch steering, forward and reverse controls, a fixed coin route, reset button, virtual area boundaries, detected-plane tint, and an AR tracking/depth diagnostic readout.
+- Touch steering with forward and reverse, a guided coin route, three virtual toy barriers, reset button, virtual area boundaries, translucent detected-plane visualization, and an AR tracking/depth diagnostic readout.
 
 ## Open and run
 
 1. Open this folder with Unity 6.0 (6000.0) or a compatible later Unity 6 editor. Let Package Manager resolve the packages.
 2. Switch the build target to Android.
 3. In Edit > Project Settings > XR Plug-in Management, install XR Plug-in Management if Unity asks, then enable ARCore for Android. Set ARCore Depth to Optional so devices without Depth API support can still run the game.
-4. Choose Tools > AR Coin Drive > Create Demo Scene. This creates Assets/Scenes/ARCoinDriveDemo.unity and sets Android minimum API level to 29 (Android 10), matching ARCore's Vulkan requirement.
+4. After pulling updates, run Tools > AR Coin Drive > Create Demo Scene again. This regenerates Assets/Scenes/ARCoinDriveDemo.unity, creates the plane-visualizer prefab/material, and sets Android minimum API level to 29 (Android 10), matching ARCore's Vulkan requirement.
 5. Connect an ARCore-compatible Android phone, enable USB debugging, and build/run. The Unity Editor does not provide live AR camera tracking.
 6. Slowly move the phone to scan a textured, well-lit floor. Detected planes are tinted teal. Tap a horizontal floor or tabletop (not a wall) to place the arena, then steer and use GO/BACK to drive.
 
