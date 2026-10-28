@@ -18,6 +18,8 @@ public sealed class ARDemoController : MonoBehaviour
 
     private ARRaycastManager _raycastManager;
     private ARPlaneManager _planeManager;
+    private ARAnchorManager _anchorManager;
+    private ARAnchor _anchor;
     private ARDepthObstacleDetector _depthDetector;
     private Transform _arena;
     private Transform _car;
@@ -33,6 +35,7 @@ public sealed class ARDemoController : MonoBehaviour
     {
         _raycastManager = FindAnyObjectByType<ARRaycastManager>();
         _planeManager = FindAnyObjectByType<ARPlaneManager>();
+        _anchorManager = FindAnyObjectByType<ARAnchorManager>();
         _depthDetector = FindAnyObjectByType<ARDepthObstacleDetector>();
     }
 
@@ -93,9 +96,29 @@ public sealed class ARDemoController : MonoBehaviour
             return;
         }
 
-        var pose = RaycastHits[floorHitIndex].pose;
+        var floorPlane = RaycastHits[floorHitIndex].trackable as ARPlane;
+        var hitPose = RaycastHits[floorHitIndex].pose;
+        var arenaPose = new Pose(hitPose.position + hitPose.up * 0.008f, hitPose.rotation);
+
+        _anchor = null;
+        var anchorDescriptor = _anchorManager != null ? _anchorManager.descriptor : null;
+        if (_anchorManager != null && anchorDescriptor != null
+            && anchorDescriptor.supportsTrackableAttachments)
+        {
+            _anchor = _anchorManager.AttachAnchor(floorPlane, arenaPose);
+        }
+
         _arena = new GameObject("Bounded Play Area").transform;
-        _arena.SetPositionAndRotation(pose.position + pose.up * 0.008f, pose.rotation);
+        if (_anchor != null)
+        {
+            _arena.SetParent(_anchor.transform, false);
+            _arena.localPosition = Vector3.zero;
+            _arena.localRotation = Quaternion.identity;
+        }
+        else
+        {
+            _arena.SetPositionAndRotation(arenaPose.position, arenaPose.rotation);
+        }
 
         CreateBoundary();
         if (_depthDetector != null)
@@ -116,7 +139,9 @@ public sealed class ARDemoController : MonoBehaviour
         SpawnObstacles();
         SpawnCoins();
         CreateGuideRoute();
-        _message = "Use arrows to steer, GO to drive forward and BACK to reverse.";
+        _message = _anchor != null
+            ? "Track locked. Use arrows to steer, GO forward and BACK to reverse."
+            : "Placed without an AR anchor. Avoid moving too far from this spot.";
     }
 
     private void DriveCar()
@@ -350,7 +375,9 @@ public sealed class ARDemoController : MonoBehaviour
     private void ResetGame()
     {
         if (_arena != null) Destroy(_arena.gameObject);
+        if (_anchor != null) Destroy(_anchor.gameObject);
         _arena = null;
+        _anchor = null;
         _car = null;
         _depthDetector?.SetArena(null);
         _coins.Clear();
@@ -380,8 +407,9 @@ public sealed class ARDemoController : MonoBehaviour
         var depthState = _depthDetector == null ? "off"
             : !_depthDetector.DepthSupported ? "not supported"
             : _depthDetector.HasDepthFrame ? "ready" : "waiting";
+        var anchorState = _anchor == null ? "none" : _anchor.trackingState.ToString();
         var trackingStatus = "AR: " + ARSession.state + " (" + ARSession.notTrackingReason
-            + ")  •  planes: " + planeCount + "  •  depth: " + depthState;
+            + ")  •  planes: " + planeCount + "  •  anchor: " + anchorState + "  •  depth: " + depthState;
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 64f * scale,
             Screen.width - margin * 3f, 24f * scale), trackingStatus,
             MakeLabelStyle(10f * scale, false));
