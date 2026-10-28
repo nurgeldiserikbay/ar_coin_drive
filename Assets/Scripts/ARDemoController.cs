@@ -23,6 +23,7 @@ public sealed class ARDemoController : MonoBehaviour
     private Transform _car;
     private readonly List<Transform> _coins = new List<Transform>();
     private readonly List<Vector2> _obstaclePositions = new List<Vector2>();
+    private Material _guideMaterial;
     private int _score;
     private float _driveInput;
     private float _steerInput;
@@ -114,6 +115,7 @@ public sealed class ARDemoController : MonoBehaviour
 
         SpawnObstacles();
         SpawnCoins();
+        CreateGuideRoute();
         _message = "Use arrows to steer, GO to drive forward and BACK to reverse.";
     }
 
@@ -289,6 +291,41 @@ public sealed class ARDemoController : MonoBehaviour
         }
     }
 
+    private void CreateGuideRoute()
+    {
+        var shader = Shader.Find("Sprites/Default");
+        if (shader == null)
+            shader = Shader.Find("Unlit/Color");
+        if (shader == null)
+            return;
+
+        _guideMaterial = new Material(shader)
+        {
+            color = new Color(0.12f, 0.88f, 0.78f, 0.62f)
+        };
+
+        var routeObject = new GameObject("Coin Guide Route");
+        routeObject.transform.SetParent(_arena, false);
+        var line = routeObject.AddComponent<LineRenderer>();
+        line.useWorldSpace = false;
+        line.loop = false;
+        line.positionCount = _coins.Count + 1;
+        line.startWidth = 0.009f;
+        line.endWidth = 0.006f;
+        line.numCapVertices = 2;
+        line.sharedMaterial = _guideMaterial;
+        line.startColor = _guideMaterial.color;
+        line.endColor = _guideMaterial.color;
+
+        line.SetPosition(0, new Vector3(0f, 0.014f, 0f));
+        for (var i = 0; i < _coins.Count; i++)
+        {
+            var point = _coins[i].localPosition;
+            point.y = 0.014f;
+            line.SetPosition(i + 1, point);
+        }
+    }
+
     private void CreateBoundary()
     {
         var lineMaterial = new Material(Shader.Find("Standard"));
@@ -319,6 +356,11 @@ public sealed class ARDemoController : MonoBehaviour
         _coins.Clear();
         _obstaclePositions.Clear();
         _score = 0;
+        if (_guideMaterial != null)
+        {
+            Destroy(_guideMaterial);
+            _guideMaterial = null;
+        }
         if (_planeManager != null) _planeManager.enabled = true;
         _message = "Move your phone slowly to scan the floor, then tap the floor.";
     }
