@@ -259,12 +259,22 @@ public sealed class ARDemoController : MonoBehaviour
     {
         var scale = Mathf.Clamp(Screen.width / 420f, 0.8f, 1.35f);
         var margin = 16f * scale;
-        var topHeight = 74f * scale;
+        var topHeight = 108f * scale;
         GUI.Box(new Rect(margin, margin, Screen.width - margin * 2f, topHeight), "");
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f, Screen.width - margin * 3f, 24f * scale),
             "AR COIN DRIVE  •  COINS " + _score + "/" + CoinCount, MakeLabelStyle(20f * scale, true));
-        GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 27f * scale, Screen.width - margin * 3f, 34f * scale),
-            _message, MakeLabelStyle(13f * scale, false));
+        GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 27f * scale, Screen.width - margin * 3f, 32f * scale),
+            _message, MakeLabelStyle(12f * scale, false));
+
+        var planeCount = _planeManager != null ? _planeManager.trackables.count : 0;
+        var depthState = _depthDetector == null ? "off"
+            : !_depthDetector.DepthSupported ? "not supported"
+            : _depthDetector.HasDepthFrame ? "ready" : "waiting";
+        var trackingStatus = "AR: " + ARSession.state + " (" + ARSession.notTrackingReason
+            + ")  •  planes: " + planeCount + "  •  depth: " + depthState;
+        GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 64f * scale,
+            Screen.width - margin * 3f, 24f * scale), trackingStatus,
+            MakeLabelStyle(10f * scale, false));
 
         if (_arena == null) return;
 
