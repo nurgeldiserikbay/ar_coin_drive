@@ -23,7 +23,7 @@ public sealed class ARDemoController : MonoBehaviour
     private Transform _car;
     private readonly List<Transform> _coins = new List<Transform>();
     private int _score;
-    private float _forwardInput;
+    private float _driveInput;
     private float _steerInput;
     private string _message = "Move your phone slowly to scan the floor, then tap the floor.";
 
@@ -74,7 +74,24 @@ public sealed class ARDemoController : MonoBehaviour
             return;
         }
 
-        var pose = RaycastHits[0].pose;
+        var floorHitIndex = -1;
+        for (var i = 0; i < RaycastHits.Count; i++)
+        {
+            var hitPlane = RaycastHits[i].trackable as ARPlane;
+            if (hitPlane != null && hitPlane.alignment == PlaneAlignment.Horizontal)
+            {
+                floorHitIndex = i;
+                break;
+            }
+        }
+
+        if (floorHitIndex < 0)
+        {
+            _message = "Tap a detected horizontal surface, such as the floor or a table.";
+            return;
+        }
+
+        var pose = RaycastHits[floorHitIndex].pose;
         _arena = new GameObject("Bounded Play Area").transform;
         _arena.SetPositionAndRotation(pose.position + pose.up * 0.008f, pose.rotation);
 
@@ -95,7 +112,7 @@ public sealed class ARDemoController : MonoBehaviour
         _car.localRotation = Quaternion.Inverse(_arena.rotation) * worldRotation;
 
         SpawnCoins();
-        _message = "Drive with the arrows and collect the gold coins. Flat vertical surfaces can stop the car.";
+        _message = "Use arrows to steer, GO to drive forward and BACK to reverse.";
     }
 
     private void DriveCar()
@@ -105,18 +122,20 @@ public sealed class ARDemoController : MonoBehaviour
         var dt = Time.deltaTime;
         var localPosition = _car.localPosition;
         var localForward = _car.localRotation * Vector3.forward;
-        var candidatePosition = localPosition + localForward * (_forwardInput * DriveSpeed * dt);
-        candidatePosition.x = Mathf.Clamp(candidatePosition.x, -HalfArena + 0.12f, HalfArena - 0.12f);
-        candidatePosition.z = Mathf.Clamp(candidatePosition.z, -HalfArena + 0.12f, HalfArena - 0.12f);
+        var travelDirection = localForward * Mathf.Sign(_driveInput);
+        var candidatePosition = localPosition + localForward * (_driveInput * DriveSpeed * dt);
+        const float carEdgeMargin = 0.17f;
+        candidatePosition.x = Mathf.Clamp(candidatePosition.x, -HalfArena + carEdgeMargin, HalfArena - carEdgeMargin);
+        candidatePosition.z = Mathf.Clamp(candidatePosition.z, -HalfArena + carEdgeMargin, HalfArena - carEdgeMargin);
 
         var blockedByWall = false;
-        if (_forwardInput > 0f)
+        if (Mathf.Abs(_driveInput) > 0.01f)
         {
-            var detectedPlane = IsBlockedByDetectedVerticalSurface(candidatePosition, localForward);
+            var detectedPlane = IsBlockedByDetectedVerticalSurface(candidatePosition, travelDirection);
             var candidateWorld = _arena.TransformPoint(candidatePosition);
-            var worldForward = _arena.TransformDirection(localForward);
+            var worldTravelDirection = _arena.TransformDirection(travelDirection);
             var detectedDepthObstacle = _depthDetector != null
-                && _depthDetector.IsPathBlocked(candidateWorld, worldForward, 0.17f, 0.13f);
+                && _depthDetector.IsPathBlocked(candidateWorld, worldTravelDirection, 0.19f, 0.12f);
             blockedByWall = detectedPlane || detectedDepthObstacle;
         }
 
@@ -132,13 +151,13 @@ public sealed class ARDemoController : MonoBehaviour
         _car.localRotation = Quaternion.AngleAxis(_steerInput * TurnSpeed * dt, Vector3.up) * _car.localRotation;
     }
 
-    private bool IsBlockedByDetectedVerticalSurface(Vector3 candidateCarPosition, Vector3 localForward)
+    private bool IsBlockedByDetectedVerticalSurface(Vector3 candidateCarPosition, Vector3 localTravelDirection)
     {
         if (_planeManager == null || _arena == null) return false;
 
         // Probe slightly ahead of the car at bumper height. AR planes are geometric
         // observations, so this only guards against flat surfaces the device has tracked.
-        var probeLocal = candidateCarPosition + localForward * 0.17f + Vector3.up * 0.07f;
+        var probeLocal = candidateCarPosition + localTravelDirection * 0.19f + Vector3.up * 0.07f;
         var probeWorld = _arena.TransformPoint(probeLocal);
 
         foreach (var plane in _planeManager.trackables)
@@ -147,10 +166,12 @@ public sealed class ARDemoController : MonoBehaviour
                 continue;
 
             var planeLocal = plane.transform.InverseTransformPoint(probeWorld);
-            if (Mathf.Abs(planeLocal.y) > 0.12f)
+            // ARPlane boundaries lie in the plane's local XY plane; local Z is
+            // distance from the detected vertical surface.
+            if (Mathf.Abs(planeLocal.z) > 0.12f)
                 continue;
 
-            if (IsPointInsidePlaneBoundary(plane, new Vector2(planeLocal.x, planeLocal.z)))
+            if (IsPointInsidePlaneBoundary(plane, new Vector2(planeLocal.x, planeLocal.y)))
                 return true;
         }
 
@@ -211,13 +232,19 @@ public sealed class ARDemoController : MonoBehaviour
     private void SpawnCoins()
     {
         _coins.Clear();
-        var random = new System.Random(37);
+        // A fixed route makes the first run readable and keeps coins away from the walls.
+        var route = new[]
+        {
+            new Vector2(-0.42f, -0.36f), new Vector2(-0.12f, -0.36f),
+            new Vector2(0.22f, -0.34f), new Vector2(0.43f, -0.10f),
+            new Vector2(0.24f, 0.16f), new Vector2(-0.08f, 0.34f),
+            new Vector2(-0.40f, 0.28f), new Vector2(-0.47f, -0.02f)
+        };
+
         for (var i = 0; i < CoinCount; i++)
         {
-            var x = Mathf.Lerp(-0.55f, 0.55f, (float)random.NextDouble());
-            var z = Mathf.Lerp(-0.55f, 0.55f, (float)random.NextDouble());
-            if (Mathf.Abs(x) < 0.18f && Mathf.Abs(z) < 0.18f) z = 0.42f;
-            var coin = ProceduralCarFactory.CreateCoin(_arena, new Vector3(x, 0.075f, z));
+            var point = route[i];
+            var coin = ProceduralCarFactory.CreateCoin(_arena, new Vector3(point.x, 0.075f, point.y));
             _coins.Add(coin.transform);
         }
     }
@@ -282,15 +309,19 @@ public sealed class ARDemoController : MonoBehaviour
         var buttonHeight = 70f * scale;
         var y = Screen.height - buttonHeight - 22f * scale;
         _steerInput = 0f;
-        _forwardInput = 0f;
+        _driveInput = 0f;
 
         if (GUI.RepeatButton(new Rect(margin, y, buttonWidth, buttonHeight), "◀"))
             _steerInput = -1f;
         if (GUI.RepeatButton(new Rect(margin + buttonWidth + 8f * scale, y, buttonWidth, buttonHeight), "▶"))
             _steerInput = 1f;
-        if (GUI.RepeatButton(new Rect(Screen.width - buttonWidth - margin, y, buttonWidth, buttonHeight), "GO"))
-            _forwardInput = 1f;
-        if (GUI.Button(new Rect(Screen.width - buttonWidth - margin, y - buttonHeight - 10f * scale, buttonWidth, 42f * scale), "RESET"))
+        var goRect = new Rect(Screen.width - buttonWidth - margin, y, buttonWidth, buttonHeight);
+        var backRect = new Rect(goRect.x - buttonWidth - 8f * scale, y, buttonWidth, buttonHeight);
+        if (GUI.RepeatButton(goRect, "GO"))
+            _driveInput = 1f;
+        if (GUI.RepeatButton(backRect, "BACK"))
+            _driveInput = -0.65f;
+        if (GUI.Button(new Rect(goRect.x, y - buttonHeight - 10f * scale, buttonWidth, 42f * scale), "RESET"))
             ResetGame();
     }
 
