@@ -4,18 +4,18 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 
 ## Included
 
-- Unity 6 project scaffold with AR Foundation and ARCore XR packages pinned to 6.4.1.
+- Unity 6 project scaffold with AR Foundation and ARCore XR packages pinned to 6.6.2.
 - Editor menu command that generates the AR session, camera rig, horizontal and vertical plane detection, raycast and occlusion managers, and demo scene.
 - Optional environment-depth sampling that can stop the car near visible obstacles on supported devices.
 - Procedural lightweight car and coin models; no third-party model download is required for the first test.
-- Simple on-screen steering and drive controls, coin counter, reset button, and virtual area boundaries.
+- Simple on-screen steering and drive controls, coin counter, reset button, virtual area boundaries, and an AR tracking/depth diagnostic readout.
 
 ## Open and run
 
 1. Open this folder with Unity 6.0 (6000.0) or a compatible later Unity 6 editor. Let Package Manager resolve the packages.
 2. Switch the build target to Android.
 3. In Edit > Project Settings > XR Plug-in Management, install XR Plug-in Management if Unity asks, then enable ARCore for Android. Set ARCore Depth to Optional so devices without Depth API support can still run the game.
-4. Choose Tools > AR Coin Drive > Create Demo Scene. This creates Assets/Scenes/ARCoinDriveDemo.unity and sets Android minimum API level to 24.
+4. Choose Tools > AR Coin Drive > Create Demo Scene. This creates Assets/Scenes/ARCoinDriveDemo.unity and sets Android minimum API level to 29 (Android 10), matching ARCore's Vulkan requirement.
 5. Connect an ARCore-compatible Android phone, enable USB debugging, and build/run. The Unity Editor does not provide live AR camera tracking.
 6. Slowly move the phone to scan a textured, well-lit floor, tap the detected floor, then use the arrow and GO controls.
 
@@ -31,6 +31,6 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 
 ## Packages
 
-- com.unity.xr.arfoundation 6.4.1
-- com.unity.xr.arcore 6.4.1
-- com.unity.xr.management 4.5.3
+- com.unity.xr.arfoundation 6.6.2
+- com.unity.xr.arcore 6.6.2
+- com.unity.xr.management 4.7.0
