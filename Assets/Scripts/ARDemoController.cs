@@ -18,6 +18,8 @@ public sealed class ARDemoController : MonoBehaviour
 
     private ARRaycastManager _raycastManager;
     private ARPlaneManager _planeManager;
+    private ARCameraManager _cameraManager;
+    private int _cameraFrameCount;
     private ARAnchorManager _anchorManager;
     private ARAnchor _anchor;
     private ARDepthObstacleDetector _depthDetector;
@@ -35,8 +37,22 @@ public sealed class ARDemoController : MonoBehaviour
     {
         _raycastManager = FindAnyObjectByType<ARRaycastManager>();
         _planeManager = FindAnyObjectByType<ARPlaneManager>();
+        _cameraManager = FindAnyObjectByType<ARCameraManager>();
+        if (_cameraManager != null)
+            _cameraManager.frameReceived += OnCameraFrameReceived;
         _anchorManager = FindAnyObjectByType<ARAnchorManager>();
         _depthDetector = FindAnyObjectByType<ARDepthObstacleDetector>();
+    }
+
+    private void OnDestroy()
+    {
+        if (_cameraManager != null)
+            _cameraManager.frameReceived -= OnCameraFrameReceived;
+    }
+
+    private void OnCameraFrameReceived(ARCameraFrameEventArgs args)
+    {
+        _cameraFrameCount++;
     }
 
     private void Update()
@@ -414,7 +430,8 @@ public sealed class ARDemoController : MonoBehaviour
             : _depthDetector.HasDepthFrame ? "ready" : "waiting";
         var anchorState = _anchor == null ? "none" : _anchor.trackingState.ToString();
         var trackingStatus = "AR: " + ARSession.state + " (" + ARSession.notTrackingReason
-            + ")  •  planes: " + planeCount + "  •  anchor: " + anchorState + "  •  depth: " + depthState;
+            + ")  •  frames: " + _cameraFrameCount + "  •  planes: " + planeCount
+            + "  •  anchor: " + anchorState + "  •  depth: " + depthState;
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 64f * scale,
             Screen.width - margin * 3f, 24f * scale), trackingStatus,
             MakeLabelStyle(10f * scale, false));
