@@ -146,10 +146,10 @@ public sealed class ARDemoController : MonoBehaviour
 
         var cameraTransform = Camera.main != null ? Camera.main.transform : null;
         var forward = cameraTransform != null
-            ? Vector3.ProjectOnPlane(cameraTransform.forward, pose.up)
+            ? Vector3.ProjectOnPlane(cameraTransform.forward, (arenaPose.rotation * Vector3.up))
             : Vector3.forward;
         if (forward.sqrMagnitude < 0.01f) forward = Vector3.forward;
-        var worldRotation = Quaternion.LookRotation(forward.normalized, pose.up);
+        var worldRotation = Quaternion.LookRotation(forward.normalized, (arenaPose.rotation * Vector3.up));
         _car.localRotation = Quaternion.Inverse(_arena.rotation) * worldRotation;
 
         SpawnObstacles();
