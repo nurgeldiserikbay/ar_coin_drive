@@ -45,11 +45,25 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
 
     private void Update()
     {
-        if (_arena == null || Time.unscaledTime < _nextSampleTime)
+        RefreshDepthSupport();
+        if (_arena == null || !DepthSupported || Time.unscaledTime < _nextSampleTime)
             return;
 
         _nextSampleTime = Time.unscaledTime + SampleInterval;
         SampleEnvironmentDepth();
+    }
+
+    private void RefreshDepthSupport()
+    {
+        var descriptor = _occlusionManager != null ? _occlusionManager.descriptor : null;
+        DepthSupported = descriptor != null
+            && descriptor.environmentDepthImageSupported == Supported.Supported;
+
+        if (!DepthSupported)
+        {
+            HasDepthFrame = false;
+            _obstaclePoints.Clear();
+        }
     }
 
     public bool IsPathBlocked(Vector3 carWorldPosition, Vector3 worldForward, float lookAhead, float radius)
@@ -61,18 +75,24 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
         if (forward.sqrMagnitude < 0.001f)
             return false;
 
-        var probe = carWorldPosition + _arena.up * 0.075f + forward * lookAhead;
+        var pathStart = carWorldPosition + _arena.up * 0.075f;
+        var pathLength = lookAhead + 0.20f;
         var radiusSquared = radius * radius;
 
         for (var i = 0; i < _obstaclePoints.Count; i++)
         {
-            var delta = _obstaclePoints[i] - probe;
+            var delta = _obstaclePoints[i] - pathStart;
             var verticalDistance = Mathf.Abs(Vector3.Dot(delta, _arena.up));
             if (verticalDistance > 0.16f)
                 continue;
 
             var horizontalDelta = Vector3.ProjectOnPlane(delta, _arena.up);
-            if (horizontalDelta.sqrMagnitude <= radiusSquared)
+            var alongPath = Vector3.Dot(horizontalDelta, forward);
+            if (alongPath < 0f || alongPath > pathLength)
+                continue;
+
+            var lateralDelta = horizontalDelta - forward * alongPath;
+            if (lateralDelta.sqrMagnitude <= radiusSquared)
                 return true;
         }
 
@@ -81,10 +101,7 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
 
     private void SampleEnvironmentDepth()
     {
-        var descriptor = _occlusionManager != null ? _occlusionManager.descriptor : null;
-        DepthSupported = descriptor != null
-            && descriptor.environmentDepthImageSupported == Supported.Supported;
-        if (!DepthSupported || _cameraManager == null || _camera == null
+        if (_cameraManager == null || _camera == null
             || !_cameraManager.TryGetIntrinsics(out var intrinsics)
             || !_occlusionManager.TryAcquireEnvironmentDepthCpuImage(out var image))
         {
@@ -103,7 +120,7 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
             }
 
             var plane = image.GetPlane(0);
-            var bytes = plane.data.ToArray();
+            var bytes = plane.data;
             var scaleX = image.width / (float)intrinsics.resolution.x;
             var scaleY = image.height / (float)intrinsics.resolution.y;
             var focalX = intrinsics.focalLength.x * scaleX;
@@ -153,7 +170,7 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
         }
     }
 
-    private static float ReadDepthMeters(XRCpuImage.Format format, byte[] bytes,
+    private static float ReadDepthMeters(XRCpuImage.Format format, NativeArray<byte> bytes,
         int rowStride, int pixelStride, int x, int y)
     {
         var index = y * rowStride + x * pixelStride;
@@ -170,7 +187,9 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
         if (format == XRCpuImage.Format.DepthFloat32)
         {
             if (index + 3 >= bytes.Length) return 0f;
-            return BitConverter.ToSingle(bytes, index);
+            var bits = bytes[index] | (bytes[index + 1] << 8)
+                | (bytes[index + 2] << 16) | (bytes[index + 3] << 24);
+            return BitConverter.Int32BitsToSingle(bits);
         }
 
         return 0f;
