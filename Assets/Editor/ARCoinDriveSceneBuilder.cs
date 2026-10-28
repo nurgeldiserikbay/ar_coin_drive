@@ -97,6 +97,7 @@ public static class ARCoinDriveSceneBuilder
         origin.Camera = camera;
         origin.CameraFloorOffsetObject = cameraOffset;
 
+        originObject.AddComponent<ARAnchorManager>();
         var planes = originObject.AddComponent<ARPlaneManager>();
         planes.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
         planes.planePrefab = CreatePlaneVisualizerPrefab();
