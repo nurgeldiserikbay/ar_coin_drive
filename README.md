@@ -1,6 +1,6 @@
 # AR Coin Drive
 
-A small Unity AR prototype for Android. The first playable loop lets the player scan and tap a horizontal surface, place a tiny car, drive inside a visible 1.5 m play area, and collect floating coins.
+A small Unity AR prototype for Android. The first playable loop lets the player scan and tap an upward-facing horizontal surface, attach the play area to an AR anchor, drive around toy barriers inside a visible 1.5 m play area, and collect floating coins.
 
 ## Included
 
@@ -22,7 +22,7 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 ## Current prototype limits
 
 - This is a playable AR foundation check, not a finished game.
-- The play boundary is virtual and fixed at 1.5 m square.
+- The play boundary is virtual and fixed at 1.5 m square. The play area is attached to a plane anchor when the provider supports trackable attachments.
 - The prototype requests vertical plane detection and stops the car near some tracked flat vertical surfaces. This does not recognize every object or guarantee safe real-world collision avoidance.
 - On supported devices, environment-depth sampling provides an approximate proximity guard and environment occlusion for visible objects. It is geometric depth sampling, not AI object recognition or complete room reconstruction.
 - Depth readings depend on device support, camera angle, tracking, and visibility. The app falls back to vertical-plane checks when depth is unavailable; both paths need real-phone testing.
