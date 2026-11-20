@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -6,6 +7,12 @@ using UnityEngine;
 /// </summary>
 public static class ProceduralCarFactory
 {
+    // Collision footprints that match the generated meshes (half sizes, metres, on the floor plane).
+    public const float CarHalfWidth = 0.115f;   // wheels reach ±0.124 m; slightly forgiving
+    public const float CarHalfLength = 0.178f;  // bumpers reach ±0.1775 m
+    public const float ObstacleHalfSize = 0.075f;
+    public const float CoinRadius = 0.0375f;
+
     public static GameObject CreateCar(Transform parent)
     {
         var root = new GameObject("Player Car");
@@ -87,16 +94,55 @@ public static class ProceduralCarFactory
         part.transform.localScale = scale;
         part.transform.localRotation = rotation;
         var renderer = part.GetComponent<Renderer>();
-        renderer.sharedMaterial = material;
+        if (material != null)
+            renderer.sharedMaterial = material;
         return part;
     }
 
-    private static Material MakeMaterial(Color color)
+    /// <summary>
+    /// Returns a shared material for a colour. Materials are cached for the whole session,
+    /// so placing or resetting the arena does not leak new materials each time.
+    /// </summary>
+    public static Material GetMaterial(Color color)
     {
+        if (MaterialCache.TryGetValue(color, out var cached) && cached != null)
+            return cached;
+
+        var material = CreateBaseMaterial();
+        if (material == null) return null;
+        material.name = "AR Coin Drive " + ColorUtility.ToHtmlStringRGB(color);
+        material.color = color;
+        MaterialCache[color] = material;
+        return material;
+    }
+
+    private static readonly Dictionary<Color, Material> MaterialCache = new Dictionary<Color, Material>();
+    private static Material _template;
+
+    private static Material CreateBaseMaterial()
+    {
+        // The Resources template references the Standard shader, which guarantees the
+        // shader is included in player builds (Shader.Find alone can return null there).
+        if (_template == null)
+            _template = Resources.Load<Material>(TemplateMaterialName);
+        if (_template != null)
+            return new Material(_template);
+
         var shader = Shader.Find("Standard");
         if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
-        return new Material(shader) { color = color };
+        if (shader == null) shader = Shader.Find("Sprites/Default");
+        if (shader == null)
+        {
+            Debug.LogError("AR Coin Drive: no usable shader found for procedural models.");
+            return null;
+        }
+
+        return new Material(shader);
     }
+
+    private const string TemplateMaterialName = "ARCoinDriveLit";
+
+    private static Material MakeMaterial(Color color) => GetMaterial(color);
 
     private static void DisableColliders(GameObject root)
     {

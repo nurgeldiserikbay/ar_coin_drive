@@ -1,6 +1,6 @@
 # AR Coin Drive
 
-A small Unity AR prototype for Android. The first playable loop lets the player scan and tap an upward-facing horizontal surface, attach the play area to an AR anchor, drive around toy barriers inside a visible 1.5 m play area, and collect floating coins.
+A small Unity AR prototype for Android. The player scans and taps an upward-facing horizontal surface, the play area is attached to an AR anchor, and each round is a 45-second race to collect 8 floating coins inside a visible 1.5 m play area while steering around toy barriers. Every round gets a new random layout, and the fastest full clear is saved as the best time.
 
 ## Included
 
@@ -9,6 +9,9 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 - Optional environment-depth sampling that can stop the car near visible obstacles on supported devices.
 - Procedural lightweight car and coin models; no third-party model download is required for the first test.
 - Multi-touch steering with forward and reverse (hold a steering arrow and GO/BACK with two thumbs at once; WASD/arrow keys in the Editor), a guided coin route, three virtual toy barriers, reset button, virtual area boundaries, translucent detected-plane visualization, and an AR tracking, camera-frame, plane, anchor, and depth diagnostic readout.
+- Round flow: the timer starts on the first GO or steering input; when all coins are collected or time runs out, AGAIN starts a new random layout on the same anchor and RESET returns to floor scanning.
+- Toy RC-car handling: acceleration, braking and rolling friction; the car turns only while moving and steering flips in reverse. Collisions use the car's rotated body box against each barrier, and coins are collected when any part of the car touches them.
+- Procedural model materials come from one shared `Resources/ARCoinDriveLit` material (Standard shader) and are cached per colour, so the shader is included in builds and resets do not leak materials.
 
 ## Open and run
 
@@ -17,7 +20,7 @@ A small Unity AR prototype for Android. The first playable loop lets the player 
 3. In Edit > Project Settings > XR Plug-in Management, ARCore is already the only Android loader and ARCore Depth is set to Optional, so devices without Depth API support can still install and run the game. Verify this if Unity asks to install XR Plug-in Management.
 4. After pulling updates, run Tools > AR Coin Drive > Create Demo Scene again. This regenerates Assets/Scenes/ARCoinDriveDemo.unity, creates the plane-visualizer prefab/material, and sets Android minimum API level to 29 (Android 10), matching ARCore's Vulkan requirement.
 5. Connect an ARCore-compatible Android phone, enable USB debugging, and build/run. The Unity Editor does not provide live AR camera tracking.
-6. Slowly move the phone to scan a textured, well-lit floor. Detected planes are tinted teal. Tap a horizontal floor or tabletop (not a wall) to place the arena, then steer and use GO/BACK to drive.
+6. Slowly move the phone to scan a textured, well-lit floor. Detected planes are tinted teal (the tint hides once the arena is placed). Tap a horizontal floor or tabletop (not a wall) to place the arena, then press GO to start the timer and steer with the arrows while holding GO or BACK.
 
 ## Current prototype limits
 

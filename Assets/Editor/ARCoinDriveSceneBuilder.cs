@@ -106,6 +106,13 @@ public static class ARCoinDriveSceneBuilder
         planes.planePrefab = CreatePlaneVisualizerPrefab();
         originObject.AddComponent<ARRaycastManager>();
 
+        var lightObject = new GameObject("AR Key Light");
+        lightObject.transform.rotation = Quaternion.Euler(55f, -35f, 0f);
+        var keyLight = lightObject.AddComponent<Light>();
+        keyLight.type = LightType.Directional;
+        keyLight.intensity = 1.05f;
+        keyLight.shadows = LightShadows.None;
+
         var game = new GameObject("AR Coin Drive");
         game.AddComponent<ARDemoController>();
 
