@@ -86,6 +86,9 @@ public static class ARCoinDriveSceneBuilder
         cameraObject.transform.SetParent(cameraOffset.transform, false);
         var camera = cameraObject.AddComponent<Camera>();
         camera.clearFlags = CameraClearFlags.SolidColor;
+        // The toy car is ~30 cm long; the default 0.3 m near plane clips it when the phone gets close.
+        camera.nearClipPlane = 0.05f;
+        camera.farClipPlane = 30f;
         cameraObject.AddComponent<ARCameraManager>();
         cameraObject.AddComponent<ARCameraBackground>();
         var occlusion = cameraObject.AddComponent<AROcclusionManager>();

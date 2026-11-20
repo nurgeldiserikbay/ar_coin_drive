@@ -12,10 +12,13 @@ using UnityEngine.XR.ARSubsystems;
 /// </summary>
 public sealed class ARDepthObstacleDetector : MonoBehaviour
 {
-    private const int PixelStep = 8;
+    private const int PixelStep = 4;
     private const int MaximumPoints = 2500;
     private const float SampleInterval = 0.25f;
-    private const float MinimumHeight = 0.045f;
+    // Points closer than this to the placed plane are treated as floor / depth noise.
+    private const float MinimumHeight = 0.06f;
+    // A single stray depth sample must not stop the car; require a small cluster.
+    private const int MinimumBlockingPoints = 4;
     private const float MaximumHeight = 0.32f;
     private const float MaximumDepth = 4f;
 
@@ -78,6 +81,7 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
         var pathStart = carWorldPosition + _arena.up * 0.075f;
         var pathLength = lookAhead + 0.20f;
         var radiusSquared = radius * radius;
+        var hits = 0;
 
         for (var i = 0; i < _obstaclePoints.Count; i++)
         {
@@ -92,7 +96,7 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
                 continue;
 
             var lateralDelta = horizontalDelta - forward * alongPath;
-            if (lateralDelta.sqrMagnitude <= radiusSquared)
+            if (lateralDelta.sqrMagnitude <= radiusSquared && ++hits >= MinimumBlockingPoints)
                 return true;
         }
 
@@ -136,6 +140,7 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
             }
 
             _obstaclePoints.Clear();
+            var orientation = Screen.orientation;
             for (var y = PixelStep / 2; y < image.height; y += PixelStep)
             {
                 for (var x = PixelStep / 2; x < image.width; x += PixelStep)
@@ -145,10 +150,9 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
                         continue;
 
                     // Depth values are camera-space Z; intrinsics convert pixels to a camera ray.
-                    var cameraPoint = new Vector3(
-                        (x - principalX) * depth / focalX,
-                        -(y - principalY) * depth / focalY,
-                        depth);
+                    var u = (x - principalX) * depth / focalX;
+                    var v = (y - principalY) * depth / focalY;
+                    var cameraPoint = SensorToDisplayCamera(u, v, depth, orientation);
                     var worldPoint = _camera.transform.TransformPoint(cameraPoint);
                     var arenaPoint = _arena.InverseTransformPoint(worldPoint);
 
@@ -167,6 +171,28 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
             }
 
             HasDepthFrame = true;
+        }
+    }
+
+    /// <summary>
+    /// CPU depth images and camera intrinsics are in the sensor's native landscape-left
+    /// orientation (x right, y down), while the AR camera transform follows the display.
+    /// Rotate the sensor-space offsets (u along image x, v along image y) into the
+    /// display camera's frame (x right, y up, z forward) for the current orientation.
+    /// </summary>
+    private static Vector3 SensorToDisplayCamera(float u, float v, float depth, ScreenOrientation orientation)
+    {
+        switch (orientation)
+        {
+            case ScreenOrientation.Portrait:
+                // Image is shown rotated 90° clockwise: image +x points down, +y points left.
+                return new Vector3(-v, -u, depth);
+            case ScreenOrientation.PortraitUpsideDown:
+                return new Vector3(v, u, depth);
+            case ScreenOrientation.LandscapeRight:
+                return new Vector3(-u, v, depth);
+            default: // LandscapeLeft: sensor and display axes match.
+                return new Vector3(u, -v, depth);
         }
     }
 

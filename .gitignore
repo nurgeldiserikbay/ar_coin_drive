@@ -22,3 +22,11 @@
 *.opendb
 *.VC.db
 .DS_Store
+
+# Android/Gradle native build cache and build outputs
+.utmp/
+*.apk
+*.aab
+# Unity crash-recovery scenes
+Assets/_Recovery/
+Assets/_Recovery.meta

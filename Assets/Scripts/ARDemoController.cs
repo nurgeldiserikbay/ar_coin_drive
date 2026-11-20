@@ -31,6 +31,23 @@ public sealed class ARDemoController : MonoBehaviour
     private int _score;
     private float _driveInput;
     private float _steerInput;
+    private bool _leftHeld;
+    private bool _rightHeld;
+    private bool _goHeld;
+    private bool _backHeld;
+    private float _uiScale = 1f;
+    private Rect _hudRect;
+    private Rect _leftRect;
+    private Rect _rightRect;
+    private Rect _goRect;
+    private Rect _backRect;
+    private Rect _resetRect;
+    private float _cachedStyleScale = -1f;
+    private GUIStyle _titleStyle;
+    private GUIStyle _messageStyle;
+    private GUIStyle _statusStyle;
+    private GUIStyle _buttonStyle;
+    private GUIStyle _smallButtonStyle;
     private string _message = "Move your phone slowly to scan the floor, then tap the floor.";
 
     private void Awake()
@@ -57,9 +74,18 @@ public sealed class ARDemoController : MonoBehaviour
 
     private void Update()
     {
+        UpdateLayout();
+
         if (_arena == null)
         {
             ReadPlacementTap();
+            return;
+        }
+
+        if (ReadControls())
+        {
+            // RESET was pressed this frame; the same touch must not also place a new arena.
+            ResetGame();
             return;
         }
 
@@ -69,16 +95,103 @@ public sealed class ARDemoController : MonoBehaviour
 
     private void ReadPlacementTap()
     {
-        if (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)
+        for (var i = 0; i < Input.touchCount; i++)
         {
-            TryPlaceArena(Input.GetTouch(0).position);
+            var touch = Input.GetTouch(i);
+            if (touch.phase != TouchPhase.Began) continue;
+            if (_hudRect.Contains(ToGuiPoint(touch.position))) continue;
+            TryPlaceArena(touch.position);
             return;
         }
 
 #if UNITY_EDITOR
-        if (Input.GetMouseButtonDown(0))
+        if (Input.GetMouseButtonDown(0) && !_hudRect.Contains(ToGuiPoint(Input.mousePosition)))
             TryPlaceArena(Input.mousePosition);
 #endif
+    }
+
+    /// <summary>
+    /// Reads every active touch independently so steering and throttle can be held
+    /// with two fingers at once (IMGUI buttons only track a single pointer).
+    /// Returns true when RESET was tapped.
+    /// </summary>
+    private bool ReadControls()
+    {
+        _leftHeld = _rightHeld = _goHeld = _backHeld = false;
+        var resetTapped = false;
+
+        for (var i = 0; i < Input.touchCount; i++)
+        {
+            var touch = Input.GetTouch(i);
+            if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+                continue;
+
+            var point = ToGuiPoint(touch.position);
+            ApplyHeldPoint(point);
+            if (touch.phase == TouchPhase.Began && _resetRect.Contains(point))
+                resetTapped = true;
+        }
+
+#if UNITY_EDITOR
+        if (Input.GetMouseButton(0))
+            ApplyHeldPoint(ToGuiPoint(Input.mousePosition));
+        if (Input.GetMouseButtonDown(0) && _resetRect.Contains(ToGuiPoint(Input.mousePosition)))
+            resetTapped = true;
+        var keySteer = Input.GetAxisRaw("Horizontal");
+        var keyDrive = Input.GetAxisRaw("Vertical");
+        if (keySteer < -0.1f) _leftHeld = true;
+        if (keySteer > 0.1f) _rightHeld = true;
+        if (keyDrive > 0.1f) _goHeld = true;
+        if (keyDrive < -0.1f) _backHeld = true;
+#endif
+
+        _steerInput = (_rightHeld ? 1f : 0f) - (_leftHeld ? 1f : 0f);
+        _driveInput = _goHeld == _backHeld ? 0f : _goHeld ? 1f : -0.65f;
+        return resetTapped;
+    }
+
+    private void ApplyHeldPoint(Vector2 guiPoint)
+    {
+        if (Expand(_leftRect).Contains(guiPoint)) _leftHeld = true;
+        else if (Expand(_rightRect).Contains(guiPoint)) _rightHeld = true;
+        else if (Expand(_goRect).Contains(guiPoint)) _goHeld = true;
+        else if (Expand(_backRect).Contains(guiPoint)) _backHeld = true;
+    }
+
+    // Slightly larger hit areas than the drawn buttons make thumb control forgiving.
+    private Rect Expand(Rect rect)
+    {
+        var pad = 6f * _uiScale;
+        return new Rect(rect.x - pad, rect.y - pad, rect.width + pad * 2f, rect.height + pad * 2f);
+    }
+
+    private static Vector2 ToGuiPoint(Vector2 screenPoint)
+    {
+        // Input uses a bottom-left origin; IMGUI rects use top-left.
+        return new Vector2(screenPoint.x, Screen.height - screenPoint.y);
+    }
+
+    private void UpdateLayout()
+    {
+        // Density-independent scale (1 unit ≈ 1 dp) so buttons keep a usable physical size
+        // on high-resolution phones; fall back to width-based scaling if DPI is unknown.
+        _uiScale = Screen.dpi > 0f
+            ? Mathf.Clamp(Screen.dpi / 160f, 0.8f, 4f)
+            : Mathf.Clamp(Screen.width / 420f, 0.8f, 3f);
+
+        var s = _uiScale;
+        var margin = 16f * s;
+        _hudRect = new Rect(margin, margin, Screen.width - margin * 2f, 120f * s);
+
+        var buttonWidth = 82f * s;
+        var buttonHeight = 70f * s;
+        var gap = 8f * s;
+        var y = Screen.height - buttonHeight - 22f * s;
+        _leftRect = new Rect(margin, y, buttonWidth, buttonHeight);
+        _rightRect = new Rect(margin + buttonWidth + gap, y, buttonWidth, buttonHeight);
+        _goRect = new Rect(Screen.width - buttonWidth - margin, y, buttonWidth, buttonHeight);
+        _backRect = new Rect(_goRect.x - buttonWidth - gap, y, buttonWidth, buttonHeight);
+        _resetRect = new Rect(_goRect.x, y - 42f * s - 10f * s, buttonWidth, 42f * s);
     }
 
     private void TryPlaceArena(Vector2 screenPosition)
@@ -399,6 +512,8 @@ public sealed class ARDemoController : MonoBehaviour
         _coins.Clear();
         _obstaclePositions.Clear();
         _score = 0;
+        _steerInput = 0f;
+        _driveInput = 0f;
         if (_guideMaterial != null)
         {
             Destroy(_guideMaterial);
@@ -410,19 +525,22 @@ public sealed class ARDemoController : MonoBehaviour
 
     private void OnGUI()
     {
-        var scale = Mathf.Clamp(Screen.width / 420f, 0.8f, 1.35f);
+        // Only draw here; all input is read in Update via Input.touches (multi-touch).
+        if (Event.current.type != EventType.Repaint) return;
+
+        EnsureStyles();
+        var scale = _uiScale;
         var margin = 16f * scale;
-        var topHeight = 120f * scale;
         var previousGuiColor = GUI.color;
         var previousContentColor = GUI.contentColor;
         GUI.color = new Color(0.025f, 0.075f, 0.11f, 0.88f);
-        GUI.Box(new Rect(margin, margin, Screen.width - margin * 2f, topHeight), "");
+        GUI.Box(_hudRect, "");
         GUI.color = previousGuiColor;
         GUI.contentColor = Color.white;
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f, Screen.width - margin * 3f, 24f * scale),
-            "AR COIN DRIVE  •  COINS " + _score + "/" + CoinCount, MakeLabelStyle(20f * scale, true));
+            "AR COIN DRIVE  •  COINS " + _score + "/" + CoinCount, _titleStyle);
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 27f * scale, Screen.width - margin * 3f, 32f * scale),
-            _message, MakeLabelStyle(12f * scale, false));
+            _message, _messageStyle);
 
         var planeCount = _planeManager != null ? _planeManager.trackables.count : 0;
         var depthState = _depthDetector == null ? "off"
@@ -434,41 +552,48 @@ public sealed class ARDemoController : MonoBehaviour
         var featureStatus = "Planes: " + planeCount + "  •  anchor: " + anchorState
             + "  •  depth: " + depthState;
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 64f * scale,
-            Screen.width - margin * 3f, 18f * scale), trackingStatus,
-            MakeLabelStyle(9f * scale, false));
+            Screen.width - margin * 3f, 18f * scale), trackingStatus, _statusStyle);
         GUI.Label(new Rect(margin * 1.8f, margin * 1.35f + 82f * scale,
-            Screen.width - margin * 3f, 18f * scale), featureStatus,
-            MakeLabelStyle(9f * scale, false));
+            Screen.width - margin * 3f, 18f * scale), featureStatus, _statusStyle);
 
         if (_arena == null) return;
 
-        var buttonWidth = 82f * scale;
-        var buttonHeight = 70f * scale;
-        var y = Screen.height - buttonHeight - 22f * scale;
-        _steerInput = 0f;
-        _driveInput = 0f;
-
-        GUI.color = new Color(0.04f, 0.62f, 0.72f, 0.92f);
         GUI.contentColor = Color.white;
-        if (GUI.RepeatButton(new Rect(margin, y, buttonWidth, buttonHeight), "◀"))
-            _steerInput = -1f;
-        if (GUI.RepeatButton(new Rect(margin + buttonWidth + 8f * scale, y, buttonWidth, buttonHeight), "▶"))
-            _steerInput = 1f;
-
-        var goRect = new Rect(Screen.width - buttonWidth - margin, y, buttonWidth, buttonHeight);
-        var backRect = new Rect(goRect.x - buttonWidth - 8f * scale, y, buttonWidth, buttonHeight);
-        GUI.color = new Color(0.08f, 0.67f, 0.34f, 0.96f);
-        if (GUI.RepeatButton(goRect, "GO"))
-            _driveInput = 1f;
-        GUI.color = new Color(0.86f, 0.48f, 0.12f, 0.94f);
-        if (GUI.RepeatButton(backRect, "BACK"))
-            _driveInput = -0.65f;
-        GUI.color = new Color(0.12f, 0.18f, 0.23f, 0.88f);
-        if (GUI.Button(new Rect(goRect.x, y - buttonHeight - 10f * scale, buttonWidth, 42f * scale), "RESET"))
-            ResetGame();
+        var steerColor = new Color(0.04f, 0.62f, 0.72f, 0.92f);
+        DrawControl(_leftRect, "◀", steerColor, _leftHeld, _buttonStyle);
+        DrawControl(_rightRect, "▶", steerColor, _rightHeld, _buttonStyle);
+        DrawControl(_goRect, "GO", new Color(0.08f, 0.67f, 0.34f, 0.96f), _goHeld, _buttonStyle);
+        DrawControl(_backRect, "BACK", new Color(0.86f, 0.48f, 0.12f, 0.94f), _backHeld, _buttonStyle);
+        DrawControl(_resetRect, "RESET", new Color(0.12f, 0.18f, 0.23f, 0.88f), false, _smallButtonStyle);
 
         GUI.color = previousGuiColor;
         GUI.contentColor = previousContentColor;
+    }
+
+    private static void DrawControl(Rect rect, string label, Color color, bool held, GUIStyle style)
+    {
+        // Brighten a held button so the player sees each finger register.
+        GUI.color = held ? Color.Lerp(color, Color.white, 0.45f) : color;
+        GUI.Box(rect, label, style);
+    }
+
+    private void EnsureStyles()
+    {
+        if (Mathf.Approximately(_cachedStyleScale, _uiScale) && _titleStyle != null)
+            return;
+
+        _cachedStyleScale = _uiScale;
+        _titleStyle = MakeLabelStyle(20f * _uiScale, true);
+        _messageStyle = MakeLabelStyle(12f * _uiScale, false);
+        _statusStyle = MakeLabelStyle(9f * _uiScale, false);
+        _buttonStyle = new GUIStyle(GUI.skin.button)
+        {
+            fontSize = Mathf.RoundToInt(22f * _uiScale),
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleCenter,
+            normal = { textColor = Color.white }
+        };
+        _smallButtonStyle = new GUIStyle(_buttonStyle) { fontSize = Mathf.RoundToInt(14f * _uiScale) };
     }
 
     private static GUIStyle MakeLabelStyle(float fontSize, bool bold)
