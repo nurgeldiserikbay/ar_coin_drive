@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
@@ -37,6 +38,16 @@ public sealed class ARDemoController : MonoBehaviour
         new Color(0.43f, 0.78f, 0.28f)
     };
 
+    // Seconds without a camera frame before the HUD suggests the virtual table.
+    private const float ARStartTimeout = 12f;
+
+    private ARSession _session;
+    private Camera _arCamera;
+    private bool _virtualMode;
+    private Transform _virtualTable;
+    private Vector3 _chaseVelocity;
+    private bool _snapChaseCamera;
+    private Rect _noArRect;
     private ARRaycastManager _raycastManager;
     private ARPlaneManager _planeManager;
     private ARCameraManager _cameraManager;
@@ -87,6 +98,9 @@ public sealed class ARDemoController : MonoBehaviour
 
     private void Awake()
     {
+        _arCamera = Camera.main;
+        ARRigSetup.EnsureRig(_arCamera);
+        _session = FindAnyObjectByType<ARSession>();
         _raycastManager = FindAnyObjectByType<ARRaycastManager>();
         _planeManager = FindAnyObjectByType<ARPlaneManager>();
         _cameraManager = FindAnyObjectByType<ARCameraManager>();
@@ -96,6 +110,121 @@ public sealed class ARDemoController : MonoBehaviour
         _depthDetector = FindAnyObjectByType<ARDepthObstacleDetector>();
         _bestTime = PlayerPrefs.GetFloat(BestTimeKey, 0f);
         EnsureSceneLight();
+    }
+
+    private void Start()
+    {
+        StartCoroutine(CheckARSupport());
+    }
+
+    /// <summary>
+    /// Falls back to the virtual table when the device cannot run AR at all. If ARCore is only
+    /// missing, ARSession (attemptUpdate) prompts the install and the HUD offers PLAY WITHOUT AR.
+    /// </summary>
+    private IEnumerator CheckARSupport()
+    {
+        if (ARSession.state == ARSessionState.None || ARSession.state == ARSessionState.CheckingAvailability)
+            yield return ARSession.CheckAvailability();
+
+        if (ARSession.state == ARSessionState.Unsupported && !_virtualMode)
+            EnterVirtualMode("This device does not support AR, so you are playing on a virtual table.");
+    }
+
+    private void EnterVirtualMode(string reason)
+    {
+        if (_virtualMode) return;
+        if (_arena != null) ResetGame();
+        _virtualMode = true;
+
+        // Shut down every AR feature so nothing keeps waiting for tracking or the camera feed.
+        if (_planeManager != null)
+        {
+            _planeManager.SetTrackablesActive(false);
+            _planeManager.enabled = false;
+            _planeManager = null;
+        }
+
+        if (_raycastManager != null) _raycastManager.enabled = false;
+        if (_anchorManager != null) _anchorManager.enabled = false;
+        _anchorManager = null;
+        if (_depthDetector != null)
+        {
+            _depthDetector.SetArena(null);
+            _depthDetector.enabled = false;
+            _depthDetector = null;
+        }
+
+        if (_arCamera != null)
+        {
+            if (_arCamera.TryGetComponent<ARCameraBackground>(out var background)) background.enabled = false;
+            if (_arCamera.TryGetComponent<AROcclusionManager>(out var occlusion)) occlusion.enabled = false;
+            if (_arCamera.TryGetComponent<ARCameraManager>(out var cameraManager)) cameraManager.enabled = false;
+            ARRigSetup.SetPoseDriverEnabled(_arCamera, false);
+            _arCamera.clearFlags = CameraClearFlags.SolidColor;
+            _arCamera.backgroundColor = new Color(0.56f, 0.70f, 0.80f);
+        }
+
+        if (_session != null) _session.enabled = false;
+
+        CreateVirtualTable();
+        _arena = new GameObject("Bounded Play Area").transform;
+        _arena.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+        CreateBoundary();
+        StartRound();
+        _message = reason + " Press GO to start.";
+    }
+
+    /// <summary>A simple tabletop and room floor so the non-AR mode still reads as a toy setup.</summary>
+    private void CreateVirtualTable()
+    {
+        _virtualTable = new GameObject("Virtual Table").transform;
+        MakeScenery("Table Top", new Vector3(0f, -0.015f, 0f), new Vector3(2.1f, 0.03f, 2.1f),
+            new Color(0.66f, 0.48f, 0.32f));
+        MakeScenery("Table Edge", new Vector3(0f, -0.06f, 0f), new Vector3(2.16f, 0.06f, 2.16f),
+            new Color(0.45f, 0.31f, 0.20f));
+        MakeScenery("Room Floor", new Vector3(0f, -0.8f, 0f), new Vector3(14f, 0.02f, 14f),
+            new Color(0.78f, 0.80f, 0.76f));
+    }
+
+    private void MakeScenery(string objectName, Vector3 position, Vector3 scale, Color color)
+    {
+        var part = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        part.name = objectName;
+        part.transform.SetParent(_virtualTable, false);
+        part.transform.localPosition = position;
+        part.transform.localScale = scale;
+        var material = ProceduralCarFactory.GetMaterial(color);
+        if (material != null) part.GetComponent<Renderer>().sharedMaterial = material;
+        part.GetComponent<Collider>().enabled = false;
+    }
+
+    /// <summary>Chase camera for the virtual table; in AR the phone itself is the camera.</summary>
+    private void LateUpdate()
+    {
+        if (!_virtualMode || _arCamera == null || _car == null) return;
+
+        var forward2 = HeadingToForward(_carHeading);
+        var forward = _arena.TransformDirection(new Vector3(forward2.x, 0f, forward2.y));
+        var up = _arena.up;
+        var carPosition = _car.position;
+        var desiredPosition = carPosition - forward * 0.85f + up * 0.75f;
+        var lookTarget = carPosition + forward * 0.3f;
+        var cameraTransform = _arCamera.transform;
+
+        if (_snapChaseCamera)
+        {
+            _snapChaseCamera = false;
+            _chaseVelocity = Vector3.zero;
+            cameraTransform.position = desiredPosition;
+            cameraTransform.rotation = Quaternion.LookRotation(lookTarget - desiredPosition, up);
+            return;
+        }
+
+        cameraTransform.position = Vector3.SmoothDamp(cameraTransform.position, desiredPosition,
+            ref _chaseVelocity, 0.28f);
+        var targetRotation = Quaternion.LookRotation(lookTarget - cameraTransform.position, up);
+        cameraTransform.rotation = Quaternion.Slerp(cameraTransform.rotation, targetRotation,
+            1f - Mathf.Exp(-8f * Time.deltaTime));
     }
 
     private void OnDestroy()
@@ -129,6 +258,7 @@ public sealed class ARDemoController : MonoBehaviour
     private void Update()
     {
         UpdateLayout();
+        ARRigSetup.EnsurePlaneVisuals(_planeManager);
         SetPlaneVisualsHidden(_arena != null);
 
         if (_arena == null)
@@ -141,7 +271,9 @@ public sealed class ARDemoController : MonoBehaviour
         if (action == ControlAction.Reset)
         {
             // The same touch must not also place a new arena this frame.
-            ResetGame();
+            // The virtual table has nothing to re-scan, so RESET just starts a new round there.
+            if (_virtualMode) StartRound();
+            else ResetGame();
             return;
         }
 
@@ -185,15 +317,45 @@ public sealed class ARDemoController : MonoBehaviour
         {
             var touch = Input.GetTouch(i);
             if (touch.phase != TouchPhase.Began) continue;
-            if (_hudRect.Contains(ToGuiPoint(touch.position))) continue;
-            TryPlaceArena(touch.position);
+            HandlePlacementPress(touch.position);
             return;
         }
 
 #if UNITY_EDITOR
-        if (Input.GetMouseButtonDown(0) && !_hudRect.Contains(ToGuiPoint(Input.mousePosition)))
-            TryPlaceArena(Input.mousePosition);
+        if (Input.GetMouseButtonDown(0))
+            HandlePlacementPress(Input.mousePosition);
 #endif
+    }
+
+    private void HandlePlacementPress(Vector2 screenPosition)
+    {
+        var guiPoint = ToGuiPoint(screenPosition);
+        if (Expand(_noArRect).Contains(guiPoint))
+        {
+            EnterVirtualMode("Playing on a virtual table without AR.");
+            return;
+        }
+
+        if (!_hudRect.Contains(guiPoint))
+            TryPlaceArena(screenPosition);
+    }
+
+    /// <summary>Explains AR start-up problems while scanning instead of leaving the player stuck.</summary>
+    private string GetPlacingMessage()
+    {
+        switch (ARSession.state)
+        {
+            case ARSessionState.NeedsInstall:
+            case ARSessionState.Installing:
+                return "Google Play Services for AR is needed. Install it, or tap PLAY WITHOUT AR.";
+            case ARSessionState.Unsupported:
+                return "AR is not available on this device. Tap PLAY WITHOUT AR.";
+        }
+
+        if (_cameraFrameCount == 0 && Time.timeSinceLevelLoad > ARStartTimeout)
+            return "The AR camera is not starting. Check camera permission, or tap PLAY WITHOUT AR.";
+
+        return _message;
     }
 
     private void TryPlaceArena(Vector2 screenPosition)
@@ -297,6 +459,7 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         CreateGuideRoute();
+        _snapChaseCamera = true;
         _state = GameState.Ready;
         _message = "Track locked. Press GO to start the " + Mathf.RoundToInt(RoundDuration) + " s timer.";
     }
@@ -327,6 +490,7 @@ public sealed class ARDemoController : MonoBehaviour
 
     private float InitialHeadingTowardsCamera()
     {
+        if (_virtualMode) return 0f;
         var cameraTransform = Camera.main != null ? Camera.main.transform : null;
         if (cameraTransform == null) return 0f;
 
@@ -849,6 +1013,11 @@ public sealed class ARDemoController : MonoBehaviour
         _backRect = new Rect(_goRect.x - buttonWidth - gap, y, buttonWidth, buttonHeight);
         _resetRect = new Rect(_goRect.x, y - 42f * s - 10f * s, buttonWidth, 42f * s);
 
+        var noArWidth = 220f * s;
+        var noArHeight = 54f * s;
+        _noArRect = new Rect((Screen.width - noArWidth) * 0.5f, Screen.height - noArHeight - 28f * s,
+            noArWidth, noArHeight);
+
         var againWidth = 190f * s;
         var againHeight = 70f * s;
         _againRect = new Rect((Screen.width - againWidth) * 0.5f, y - againHeight - 70f * s, againWidth, againHeight);
@@ -879,7 +1048,8 @@ public sealed class ARDemoController : MonoBehaviour
         title += "  •  BEST " + (_bestTime > 0f ? _bestTime.ToString("0.0") + " s" : "--");
         GUI.Label(new Rect(textX, margin * 1.35f, textWidth, 24f * scale), title, _titleStyle);
 
-        var message = _hint != null && Time.time < _hintUntil && _state == GameState.Playing ? _hint : _message;
+        var message = _arena == null ? GetPlacingMessage()
+            : _hint != null && Time.time < _hintUntil && _state == GameState.Playing ? _hint : _message;
         GUI.Label(new Rect(textX, margin * 1.35f + 27f * scale, textWidth, 32f * scale), message, _messageStyle);
 
         var planeCount = _planeManager != null ? _planeManager.trackables.count : 0;
@@ -891,11 +1061,18 @@ public sealed class ARDemoController : MonoBehaviour
             + ")  •  camera frames: " + _cameraFrameCount;
         var featureStatus = "Planes: " + planeCount + "  •  anchor: " + anchorState
             + "  •  depth: " + depthState;
+        if (_virtualMode)
+        {
+            trackingStatus = "Mode: virtual table (no AR)";
+            featureStatus = "RESET starts a new layout";
+        }
+
         GUI.Label(new Rect(textX, margin * 1.35f + 64f * scale, textWidth, 18f * scale), trackingStatus, _statusStyle);
         GUI.Label(new Rect(textX, margin * 1.35f + 82f * scale, textWidth, 18f * scale), featureStatus, _statusStyle);
 
         if (_arena == null)
         {
+            DrawControl(_noArRect, "PLAY WITHOUT AR", new Color(0.12f, 0.18f, 0.23f, 0.9f), false, _smallButtonStyle);
             GUI.color = previousGuiColor;
             GUI.contentColor = previousContentColor;
             return;

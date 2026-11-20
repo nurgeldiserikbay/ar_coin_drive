@@ -17,10 +17,17 @@ A small Unity AR prototype for Android. The player scans and taps an upward-faci
 
 1. Open this folder with Unity 6.0 (6000.0) or a compatible later Unity 6 editor. Let Package Manager resolve the packages.
 2. Switch the build target to Android.
-3. In Edit > Project Settings > XR Plug-in Management, ARCore is already the only Android loader and ARCore Depth is set to Optional, so devices without Depth API support can still install and run the game. Verify this if Unity asks to install XR Plug-in Management.
+3. In Edit > Project Settings > XR Plug-in Management, ARCore is already the only Android loader, and both ARCore and ARCore Depth are set to Optional, so the game installs on any Android 10+ phone (see "Without AR" below). Verify this if Unity asks to install XR Plug-in Management.
 4. After pulling updates, run Tools > AR Coin Drive > Create Demo Scene again. This regenerates Assets/Scenes/ARCoinDriveDemo.unity, creates the plane-visualizer prefab/material, and sets Android minimum API level to 29 (Android 10), matching ARCore's Vulkan requirement.
 5. Connect an ARCore-compatible Android phone, enable USB debugging, and build/run. The Unity Editor does not provide live AR camera tracking.
 6. Slowly move the phone to scan a textured, well-lit floor. Detected planes are tinted teal (the tint hides once the arena is placed). Tap a horizontal floor or tabletop (not a wall) to place the arena, then press GO to start the timer and steer with the arrows while holding GO or BACK.
+
+## Without AR
+
+- On start the game runs `ARSession.CheckAvailability()`. If the device cannot run AR, it switches automatically to a virtual table: a 3D tabletop with the same arena, rounds and controls, viewed through a chase camera.
+- If ARCore is supported but not installed, ARSession asks the player to install Google Play Services for AR. The scanning screen also has a PLAY WITHOUT AR button for declined installs, missing camera permission, or a room that is too dark to track.
+- In the Editor AR is unavailable, so the virtual table starts automatically, which makes quick gameplay testing possible without a phone.
+- `ARRigSetup` repairs older generated scenes at runtime: it adds the camera TrackedPoseDriver (without it the camera never follows the phone), an ARAnchorManager, and plane visuals when no plane prefab is assigned.
 
 ## Current prototype limits
 
