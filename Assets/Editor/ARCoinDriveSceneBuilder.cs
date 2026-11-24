@@ -72,6 +72,7 @@ public static class ARCoinDriveSceneBuilder
         PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
         // Two-player mode talks over the local network.
         PlayerSettings.Android.forceInternetPermission = true;
+        ARCoinDriveBranding.Apply();
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 

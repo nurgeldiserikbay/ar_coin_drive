@@ -153,8 +153,15 @@ public sealed class ARDemoController : MonoBehaviour
     private GUIStyle _smallButtonStyle;
     private GUIStyle _bigStyle;
 
+    // Title logo on the start screen: fully visible for a few seconds, then fades so the
+    // camera view is clear while the player looks for a floor.
+    private const float LogoHoldSeconds = 3f;
+    private const float LogoFadeSeconds = 1f;
+    private Texture2D _logo;
+
     private void Awake()
     {
+        _logo = Resources.Load<Texture2D>("ARCoinDriveLogo");
         _arCamera = Camera.main;
         ARRigSetup.EnsureRig(_arCamera);
         _session = FindAnyObjectByType<ARSession>();
@@ -1671,7 +1678,7 @@ public sealed class ARDemoController : MonoBehaviour
         GUI.color = previousGuiColor;
         GUI.contentColor = Color.white;
 
-        var title = "AR RACER";
+        var title = "AR COIN DRIVE";
         if (_arena != null && _mode == GameMode.Battle)
         {
             title = "BATTLE  •  YOU " + _playerWins + " : " + _rivalWins + " RIVAL  •  RING "
@@ -1716,6 +1723,7 @@ public sealed class ARDemoController : MonoBehaviour
 
         if (_arena == null)
         {
+            DrawLogo();
             DrawControl(_noArRect, "PLAY WITHOUT AR", new Color(0.12f, 0.18f, 0.23f, 0.9f), false, _smallButtonStyle);
             GUI.color = previousGuiColor;
             GUI.contentColor = previousContentColor;
@@ -1778,6 +1786,20 @@ public sealed class ARDemoController : MonoBehaviour
 
         GUI.color = previousGuiColor;
         GUI.contentColor = previousContentColor;
+    }
+
+    private void DrawLogo()
+    {
+        if (_logo == null) return;
+        var alpha = 1f - Mathf.Clamp01((Time.timeSinceLevelLoad - LogoHoldSeconds) / LogoFadeSeconds);
+        if (alpha <= 0f) return;
+
+        var aspect = _logo.width / (float)_logo.height;
+        var width = Mathf.Min(Screen.width * 0.78f, Screen.height * 0.42f * aspect);
+        var height = width / aspect;
+        var rect = new Rect((Screen.width - width) * 0.5f, Screen.height * 0.47f - height * 0.5f, width, height);
+        GUI.color = new Color(1f, 1f, 1f, alpha);
+        GUI.DrawTexture(rect, _logo, ScaleMode.ScaleToFit, true);
     }
 
     private static void DrawControl(Rect rect, string label, Color color, bool held, GUIStyle style)
