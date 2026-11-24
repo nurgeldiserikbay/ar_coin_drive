@@ -8,40 +8,16 @@ using UnityEngine;
 public static class ProceduralCarFactory
 {
     // Collision footprints that match the generated meshes (half sizes, metres, on the floor plane).
-    public const float CarHalfWidth = 0.115f;   // wheels reach ±0.124 m; slightly forgiving
-    public const float CarHalfLength = 0.178f;  // bumpers reach ±0.1775 m
+    public const float CarScale = 0.6f;          // keeps the car in proportion to the 1.5 m track
+    public const float CarHalfWidth = 0.115f * CarScale;
+    public const float CarHalfLength = 0.178f * CarScale;
     public const float ObstacleHalfSize = 0.075f;
-    public const float CoinRadius = 0.0375f;
+    public const float CoinScale = 0.72f;
+    public const float CoinRadius = 0.0375f * CoinScale;
 
-    public static GameObject CreateCar(Transform parent)
+    public static GameObject CreateCar(Transform parent, Color? paint = null)
     {
-        var root = new GameObject("Player Car");
-        root.transform.SetParent(parent, false);
-
-        var red = MakeMaterial(new Color(0.94f, 0.22f, 0.16f));
-        var dark = MakeMaterial(new Color(0.12f, 0.16f, 0.20f));
-        var glass = MakeMaterial(new Color(0.40f, 0.78f, 0.91f));
-        var cream = MakeMaterial(new Color(1.00f, 0.88f, 0.54f));
-
-        Part(root.transform, PrimitiveType.Cube, "Body", new Vector3(0f, 0.07f, 0f),
-            new Vector3(0.17f, 0.07f, 0.31f), red, Quaternion.identity);
-        Part(root.transform, PrimitiveType.Cube, "Cabin", new Vector3(0f, 0.13f, -0.015f),
-            new Vector3(0.12f, 0.075f, 0.15f), glass, Quaternion.identity);
-        Part(root.transform, PrimitiveType.Cube, "Front Bumper", new Vector3(0f, 0.045f, 0.165f),
-            new Vector3(0.18f, 0.035f, 0.025f), dark, Quaternion.identity);
-        Part(root.transform, PrimitiveType.Cube, "Rear Bumper", new Vector3(0f, 0.045f, -0.165f),
-            new Vector3(0.18f, 0.035f, 0.025f), dark, Quaternion.identity);
-        Part(root.transform, PrimitiveType.Cube, "Left Headlight", new Vector3(-0.055f, 0.083f, 0.163f),
-            new Vector3(0.035f, 0.022f, 0.012f), cream, Quaternion.identity);
-        Part(root.transform, PrimitiveType.Cube, "Right Headlight", new Vector3(0.055f, 0.083f, 0.163f),
-            new Vector3(0.035f, 0.022f, 0.012f), cream, Quaternion.identity);
-
-        Wheel(root.transform, "Front Left Wheel", -0.095f, 0.055f, 0.095f, dark);
-        Wheel(root.transform, "Front Right Wheel", 0.095f, 0.055f, 0.095f, dark);
-        Wheel(root.transform, "Rear Left Wheel", -0.095f, 0.055f, -0.095f, dark);
-        Wheel(root.transform, "Rear Right Wheel", 0.095f, 0.055f, -0.095f, dark);
-        DisableColliders(root);
-        return root;
+        return ProceduralCarModel.Create(parent, paint ?? new Color(0.88f, 0.08f, 0.07f));
     }
 
     public static GameObject CreateObstacle(Transform parent, Vector3 localPosition, Color color)
@@ -65,6 +41,7 @@ public static class ProceduralCarFactory
         var root = new GameObject("Coin");
         root.transform.SetParent(parent, false);
         root.transform.localPosition = localPosition;
+        root.transform.localScale = Vector3.one * CoinScale;
 
         var gold = MakeMaterial(new Color(1.00f, 0.72f, 0.12f));
         var highlight = MakeMaterial(new Color(1.00f, 0.91f, 0.45f));
@@ -76,12 +53,6 @@ public static class ProceduralCarFactory
             highlight, Quaternion.Euler(90f, 0f, 0f));
         DisableColliders(root);
         return root;
-    }
-
-    private static void Wheel(Transform parent, string name, float x, float y, float z, Material material)
-    {
-        Part(parent, PrimitiveType.Cylinder, name, new Vector3(x, y, z),
-            new Vector3(0.045f, 0.029f, 0.045f), material, Quaternion.Euler(0f, 0f, 90f));
     }
 
     private static GameObject Part(Transform parent, PrimitiveType type, string name,
@@ -103,20 +74,24 @@ public static class ProceduralCarFactory
     /// Returns a shared material for a colour. Materials are cached for the whole session,
     /// so placing or resetting the arena does not leak new materials each time.
     /// </summary>
-    public static Material GetMaterial(Color color)
+    public static Material GetMaterial(Color color, float smoothness = 0.35f, float metallic = 0f)
     {
-        if (MaterialCache.TryGetValue(color, out var cached) && cached != null)
+        var key = (color, smoothness, metallic);
+        if (MaterialCache.TryGetValue(key, out var cached) && cached != null)
             return cached;
 
         var material = CreateBaseMaterial();
         if (material == null) return null;
         material.name = "AR Coin Drive " + ColorUtility.ToHtmlStringRGB(color);
         material.color = color;
-        MaterialCache[color] = material;
+        if (material.HasProperty("_Glossiness")) material.SetFloat("_Glossiness", smoothness);
+        if (material.HasProperty("_Metallic")) material.SetFloat("_Metallic", metallic);
+        MaterialCache[key] = material;
         return material;
     }
 
-    private static readonly Dictionary<Color, Material> MaterialCache = new Dictionary<Color, Material>();
+    private static readonly Dictionary<(Color, float, float), Material> MaterialCache =
+        new Dictionary<(Color, float, float), Material>();
     private static Material _template;
 
     private static Material CreateBaseMaterial()

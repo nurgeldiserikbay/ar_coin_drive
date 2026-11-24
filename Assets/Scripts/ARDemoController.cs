@@ -5,21 +5,41 @@ using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
 /// <summary>
-/// Playable loop: scan and tap a horizontal surface, then race the clock to collect every
-/// coin inside a bounded 1.5 m square while steering around toy barriers. Each round gets a
-/// fresh random layout; the fastest full clear is saved as the best time.
+/// Playable loop: scan and tap a horizontal surface (or play on the virtual island), then race
+/// a computer rival for three laps of the toy track. Coins on the road give a short speed boost;
+/// the fastest finish is saved as the best time.
 /// Real obstacle sensing is approximate and device-dependent.
 /// </summary>
 public sealed class ARDemoController : MonoBehaviour
 {
-    private enum GameState { Placing, Ready, Playing, Won, Lost }
-    private enum ControlAction { None, Reset, Again }
+    private enum GameState { Placing, Ready, Countdown, Racing, Finished }
+    private enum GameMode { Race, Battle }
+    private enum ControlAction { None, Reset, Again, Mode }
+
+    private sealed class Rival
+    {
+        public Transform Car;
+        public ProceduralCarRig Rig;
+        public Vector2 Position;
+        public float Heading;
+        public float Speed;
+        public float Steer;
+        public Vector2 Knock;
+        public float Fall;
+        public float Laps;
+        public float LastProgress;
+        public bool Finished;
+    }
 
     private const float HalfArena = 0.75f;
-    private const int CoinCount = 8;
-    private const int ObstacleCount = 3;
-    private const float RoundDuration = 45f;
-    private const string BestTimeKey = "ARCoinDrive.BestTime";
+    private const int CoinCount = 6;
+    private const int LapCount = 5;
+    private const float CountdownSeconds = 3f;
+    private const float BoostSeconds = 1.6f;
+    private const float BoostMultiplier = 1.35f;
+    private const float CoinRespawnSeconds = 5f;
+    private const float CarContactDistance = 0.165f;
+    private const string BestTimeKey = "ARCoinDrive.BestRaceTime";
 
     // Driving feel: the car accelerates, brakes and only turns while rolling, like a toy RC car.
     private const float MaxSpeed = 0.48f;
@@ -58,17 +78,43 @@ public sealed class ARDemoController : MonoBehaviour
     private Transform _arena;
     private Transform _roundRoot;
     private Transform _car;
+    private ProceduralCarRig _carRig;
     private readonly List<Transform> _coins = new List<Transform>();
+    private readonly List<float> _coinRespawnAt = new List<float>();
     private readonly List<Vector2> _obstaclePositions = new List<Vector2>();
     private readonly List<Vector2> _coinLayout = new List<Vector2>();
-    private Material _guideMaterial;
+    private Rival _rival;
+
+    // Push-out battle: a shrinking ring, first to three knockouts wins the match.
+    private const int BattleWinsNeeded = 3;
+    private const float BattleStartRadius = 0.62f;
+    private const float BattleEndRadius = 0.30f;
+    private const float BattleShrinkSeconds = 40f;
+    private const float BattleStartOffset = 0.29f;
+    private GameMode _mode = GameMode.Race;
+    private GameObject _trackVisual;
+    private Transform _battleRing;
+    private float _battleRadius = BattleStartRadius;
+    private Vector2 _playerKnock;
+    private float _playerFall;
+    private int _playerWins;
+    private int _rivalWins;
+    private float _knockoutUntil;
+    private string _knockoutText;
+    private Rect _modeRect;
 
     private GameState _state = GameState.Placing;
     private Vector2 _carPosition;
     private float _carHeading;
     private float _speed;
     private int _score;
-    private float _timeLeft;
+    private float _countdown;
+    private float _raceTime;
+    private float _goFlashUntil;
+    private float _boostUntil;
+    private float _playerLaps;
+    private float _playerLastProgress;
+    private int _finishPlace = 1;
     private float _bestTime;
     private bool _newBest;
     private float _driveInput;
@@ -95,6 +141,7 @@ public sealed class ARDemoController : MonoBehaviour
     private GUIStyle _statusStyle;
     private GUIStyle _buttonStyle;
     private GUIStyle _smallButtonStyle;
+    private GUIStyle _bigStyle;
 
     private void Awake()
     {
@@ -169,26 +216,50 @@ public sealed class ARDemoController : MonoBehaviour
         CreateVirtualTable();
         _arena = new GameObject("Bounded Play Area").transform;
         _arena.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
-        CreateBoundary();
+        CreateArenaVisuals();
         StartRound();
         _message = reason + " Press GO to start.";
     }
 
-    /// <summary>A simple tabletop and room floor so the non-AR mode still reads as a toy setup.</summary>
+    /// <summary>A small landscaped island around the track for players without AR.</summary>
     private void CreateVirtualTable()
     {
         _virtualTable = new GameObject("Virtual Table").transform;
-        MakeScenery("Table Top", new Vector3(0f, -0.015f, 0f), new Vector3(2.1f, 0.03f, 2.1f),
-            new Color(0.66f, 0.48f, 0.32f));
-        MakeScenery("Table Edge", new Vector3(0f, -0.06f, 0f), new Vector3(2.16f, 0.06f, 2.16f),
-            new Color(0.45f, 0.31f, 0.20f));
-        MakeScenery("Room Floor", new Vector3(0f, -0.8f, 0f), new Vector3(14f, 0.02f, 14f),
-            new Color(0.78f, 0.80f, 0.76f));
+        MakeScenery("Meadow", new Vector3(0f, -0.015f, 0f), new Vector3(2.3f, 0.03f, 2.3f),
+            new Color(0.40f, 0.70f, 0.33f));
+        MakeScenery("Island Edge", new Vector3(0f, -0.09f, 0f), new Vector3(2.36f, 0.14f, 2.36f),
+            new Color(0.58f, 0.40f, 0.25f));
+        MakeScenery("Distant Ground", new Vector3(0f, -0.8f, 0f), new Vector3(40f, 0.02f, 40f),
+            new Color(0.48f, 0.72f, 0.56f));
+
+        var treeSpots = new[]
+        {
+            new Vector2(-0.95f, -0.92f), new Vector2(-0.78f, -1.02f), new Vector2(0.96f, -0.90f),
+            new Vector2(1.01f, 0.72f), new Vector2(0.84f, 0.99f), new Vector2(-0.98f, 0.88f),
+            new Vector2(-1.03f, 0.05f), new Vector2(1.04f, -0.08f), new Vector2(0.02f, 1.04f),
+            new Vector2(-0.06f, -1.05f)
+        };
+        for (var i = 0; i < treeSpots.Length; i++)
+            MakeTree(treeSpots[i], 0.8f + (i * 37 % 10) * 0.05f, i % 3);
     }
 
-    private void MakeScenery(string objectName, Vector3 position, Vector3 scale, Color color)
+    private void MakeTree(Vector2 spot, float size, int tint)
     {
-        var part = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        var foliage = tint == 0 ? new Color(0.20f, 0.56f, 0.28f)
+            : tint == 1 ? new Color(0.28f, 0.64f, 0.26f) : new Color(0.16f, 0.48f, 0.30f);
+        var trunkHeight = 0.09f * size;
+        MakeScenery("Tree Trunk", new Vector3(spot.x, trunkHeight, spot.y),
+            new Vector3(0.04f, trunkHeight, 0.04f) * size, new Color(0.42f, 0.27f, 0.16f), PrimitiveType.Cylinder);
+        MakeScenery("Tree Crown", new Vector3(spot.x, 0.25f * size, spot.y),
+            Vector3.one * 0.25f * size, foliage, PrimitiveType.Sphere);
+        MakeScenery("Tree Crown Top", new Vector3(spot.x + 0.025f * size, 0.36f * size, spot.y - 0.015f * size),
+            Vector3.one * 0.16f * size, Color.Lerp(foliage, Color.white, 0.10f), PrimitiveType.Sphere);
+    }
+
+    private void MakeScenery(string objectName, Vector3 position, Vector3 scale, Color color,
+        PrimitiveType shape = PrimitiveType.Cube)
+    {
+        var part = GameObject.CreatePrimitive(shape);
         part.name = objectName;
         part.transform.SetParent(_virtualTable, false);
         part.transform.localPosition = position;
@@ -207,7 +278,7 @@ public sealed class ARDemoController : MonoBehaviour
         var forward = _arena.TransformDirection(new Vector3(forward2.x, 0f, forward2.y));
         var up = _arena.up;
         var carPosition = _car.position;
-        var desiredPosition = carPosition - forward * 0.85f + up * 0.75f;
+        var desiredPosition = carPosition - forward * 0.56f + up * 0.40f;
         var lookTarget = carPosition + forward * 0.3f;
         var cameraTransform = _arCamera.transform;
 
@@ -231,8 +302,6 @@ public sealed class ARDemoController : MonoBehaviour
     {
         if (_cameraManager != null)
             _cameraManager.frameReceived -= OnCameraFrameReceived;
-        if (_guideMaterial != null)
-            Destroy(_guideMaterial);
     }
 
     private void OnCameraFrameReceived(ARCameraFrameEventArgs args)
@@ -283,30 +352,62 @@ public sealed class ARDemoController : MonoBehaviour
             return;
         }
 
-        if (_state == GameState.Ready && (Mathf.Abs(_driveInput) > 0.01f || Mathf.Abs(_steerInput) > 0.01f))
+        if (action == ControlAction.Mode)
         {
-            _state = GameState.Playing;
-            _message = "Collect all " + CoinCount + " coins before the time runs out!";
+            _mode = _mode == GameMode.Race ? GameMode.Battle : GameMode.Race;
+            SetModeVisuals();
+            StartRound();
+            return;
         }
 
-        if (_state == GameState.Playing)
+        var dt = Time.deltaTime;
+        if (_state == GameState.Ready && _driveInput > 0.01f)
         {
-            _timeLeft -= Time.deltaTime;
-            if (_timeLeft <= 0f)
+            _state = GameState.Countdown;
+            _countdown = CountdownSeconds;
+            _message = "Get ready...";
+        }
+
+        if (_state == GameState.Countdown)
+        {
+            _countdown -= dt;
+            if (_countdown <= 0f)
             {
-                _timeLeft = 0f;
-                FinishRound(false);
+                _state = GameState.Racing;
+                _goFlashUntil = Time.time + 0.9f;
+                _message = _mode == GameMode.Race
+                    ? LapCount + " laps! Drive through coins for a speed boost."
+                    : "Push your rival out of the ring! The ring keeps shrinking.";
             }
         }
 
-        if (_state != GameState.Playing)
+        if (_state == GameState.Racing && _knockoutUntil <= 0f)
+            _raceTime += dt;
+
+        if (_state != GameState.Racing || _knockoutUntil > 0f)
         {
             _driveInput = 0f;
             _steerInput = 0f;
         }
 
         DriveCar();
-        AnimateAndCollectCoins();
+        DriveRival(dt);
+        ResolveCarContact();
+        ApplyCarTransform();
+        ApplyRivalTransform();
+        if (_carRig != null)
+            _carRig.UpdateVisual(_speed, _steerInput, dt);
+        if (_rival != null && _rival.Rig != null)
+            _rival.Rig.UpdateVisual(_rival.Speed, _rival.Steer, dt);
+        if (_mode == GameMode.Race)
+        {
+            UpdateRaceProgress();
+            AnimateAndCollectCoins();
+        }
+        else
+        {
+            UpdateBattle(dt);
+        }
     }
 
     // ---------------------------------------------------------------- placement
@@ -413,7 +514,7 @@ public sealed class ARDemoController : MonoBehaviour
             _arena.SetPositionAndRotation(arenaPose.position, arenaPose.rotation);
         }
 
-        CreateBoundary();
+        CreateArenaVisuals();
         if (_depthDetector != null)
             _depthDetector.SetArena(_arena);
 
@@ -428,20 +529,49 @@ public sealed class ARDemoController : MonoBehaviour
     {
         if (_roundRoot != null) Destroy(_roundRoot.gameObject);
         _coins.Clear();
+        _coinRespawnAt.Clear();
         _obstaclePositions.Clear();
         _score = 0;
         _speed = 0f;
         _newBest = false;
-        _timeLeft = RoundDuration;
+        _raceTime = 0f;
+        _boostUntil = 0f;
+        _goFlashUntil = 0f;
         _hint = null;
 
         _roundRoot = new GameObject("Round").transform;
         _roundRoot.SetParent(_arena, false);
 
-        _carPosition = Vector2.zero;
-        _carHeading = InitialHeadingTowardsCamera();
+        var track = RaceTrack.Shared;
+        _carPosition = track.GridPosition(0);
+        _carHeading = track.StartHeading;
         _car = ProceduralCarFactory.CreateCar(_roundRoot).transform;
+        _carRig = _car.GetComponent<ProceduralCarRig>();
+        StartLapCounter(_carPosition, out _playerLaps, out _playerLastProgress);
         ApplyCarTransform();
+
+        var rivalCar = ProceduralCarFactory.CreateCar(_roundRoot, new Color(0.10f, 0.42f, 0.92f)).transform;
+        _rival = new Rival
+        {
+            Car = rivalCar,
+            Rig = rivalCar.GetComponent<ProceduralCarRig>(),
+            Position = track.GridPosition(1),
+            Heading = track.StartHeading
+        };
+        StartLapCounter(_rival.Position, out _rival.Laps, out _rival.LastProgress);
+        ApplyRivalTransform();
+
+        _playerWins = 0;
+        _rivalWins = 0;
+        _knockoutUntil = 0f;
+        if (_mode == GameMode.Battle)
+        {
+            ResetBattleRound();
+            _snapChaseCamera = true;
+            _state = GameState.Ready;
+            _message = "Battle! First to " + BattleWinsNeeded + " knockouts wins. Hold GO to start.";
+            return;
+        }
 
         GenerateLayout();
         for (var i = 0; i < _obstaclePositions.Count; i++)
@@ -454,148 +584,321 @@ public sealed class ARDemoController : MonoBehaviour
         for (var i = 0; i < _coinLayout.Count; i++)
         {
             var point = _coinLayout[i];
-            var coin = ProceduralCarFactory.CreateCoin(_roundRoot, new Vector3(point.x, 0.075f, point.y));
+            var coin = ProceduralCarFactory.CreateCoin(_roundRoot, new Vector3(point.x, 0.06f, point.y));
             _coins.Add(coin.transform);
+            _coinRespawnAt.Add(0f);
         }
 
-        CreateGuideRoute();
         _snapChaseCamera = true;
         _state = GameState.Ready;
-        _message = "Track locked. Press GO to start the " + Mathf.RoundToInt(RoundDuration) + " s timer.";
+        _message = "On the grid. Hold GO to start the countdown.";
     }
 
-    private void FinishRound(bool won)
+    private void FinishRace()
     {
-        _state = won ? GameState.Won : GameState.Lost;
-        _speed = 0f;
-        if (won)
+        _state = GameState.Finished;
+        var place = _rival != null && _rival.Finished ? 2 : 1;
+        _finishPlace = place;
+        _newBest = _bestTime <= 0f || _raceTime < _bestTime;
+        if (_newBest)
         {
-            var clearTime = RoundDuration - _timeLeft;
-            _newBest = _bestTime <= 0f || clearTime < _bestTime;
-            if (_newBest)
+            _bestTime = _raceTime;
+            PlayerPrefs.SetFloat(BestTimeKey, _bestTime);
+            PlayerPrefs.Save();
+        }
+
+        _message = (place == 1 ? "1st place! " : "2nd place. ") + "Time " + FormatTime(_raceTime)
+            + (_newBest ? "  NEW BEST!" : "") + "  Tap AGAIN to race again.";
+    }
+
+    // ---------------------------------------------------------------- battle
+
+    private void CreateArenaVisuals()
+    {
+        _trackVisual = RaceTrack.Shared.CreateVisual(_arena);
+        _battleRing = BattleArena.Create(_arena);
+        SetModeVisuals();
+    }
+
+    private void SetModeVisuals()
+    {
+        if (_trackVisual != null) _trackVisual.SetActive(_mode == GameMode.Race);
+        if (_battleRing != null) _battleRing.gameObject.SetActive(_mode == GameMode.Battle);
+        BattleArena.SetRadius(_battleRing, BattleStartRadius);
+    }
+
+    /// <summary>Puts both cars back on their start lines facing each other and restores the ring.</summary>
+    private void ResetBattleRound()
+    {
+        _battleRadius = BattleStartRadius;
+        BattleArena.SetRadius(_battleRing, _battleRadius);
+        _raceTime = 0f;
+        _carPosition = new Vector2(0f, -BattleStartOffset);
+        _carHeading = 0f;
+        _speed = 0f;
+        _playerKnock = Vector2.zero;
+        _playerFall = 0f;
+        if (_rival != null)
+        {
+            _rival.Position = new Vector2(0f, BattleStartOffset);
+            _rival.Heading = 180f;
+            _rival.Speed = 0f;
+            _rival.Knock = Vector2.zero;
+            _rival.Fall = 0f;
+        }
+
+        ApplyCarTransform();
+        ApplyRivalTransform();
+    }
+
+    private void UpdateBattle(float dt)
+    {
+        if (_state != GameState.Racing || _rival == null) return;
+
+        if (_knockoutUntil > 0f)
+        {
+            // The loser slides off the edge and drops while the score sinks in.
+            if (_playerFall > 0f) _playerFall += dt;
+            if (_rival.Fall > 0f) _rival.Fall += dt;
+            if (Time.time < _knockoutUntil) return;
+
+            _knockoutUntil = 0f;
+            if (_playerWins >= BattleWinsNeeded || _rivalWins >= BattleWinsNeeded)
             {
-                _bestTime = clearTime;
-                PlayerPrefs.SetFloat(BestTimeKey, _bestTime);
-                PlayerPrefs.Save();
+                FinishBattle();
+                return;
             }
 
-            _message = (_newBest ? "NEW BEST! " : "All coins collected! ")
-                + "Time " + clearTime.ToString("0.0") + " s. Tap AGAIN for a new layout.";
+            ResetBattleRound();
+            _state = GameState.Countdown;
+            _countdown = 2f;
+            _message = "Next round! YOU " + _playerWins + " : " + _rivalWins + " RIVAL";
+            return;
+        }
+
+        _battleRadius = Mathf.Lerp(BattleStartRadius, BattleEndRadius, _raceTime / BattleShrinkSeconds);
+        BattleArena.SetRadius(_battleRing, _battleRadius);
+
+        var playerOut = _carPosition.magnitude > _battleRadius + 0.015f;
+        var rivalOut = _rival.Position.magnitude > _battleRadius + 0.015f;
+        if (!playerOut && !rivalOut) return;
+
+        // If both slip out on the same frame, whoever went further loses.
+        if (playerOut && rivalOut)
+        {
+            playerOut = _carPosition.magnitude >= _rival.Position.magnitude;
+            rivalOut = !playerOut;
+        }
+
+        if (playerOut)
+        {
+            _rivalWins++;
+            _playerFall = 0.0001f;
+            _knockoutText = "OUT!";
         }
         else
         {
-            _message = "Time's up! " + _score + "/" + CoinCount + " coins. Tap AGAIN to retry.";
+            _playerWins++;
+            _rival.Fall = 0.0001f;
+            _knockoutText = "KNOCKOUT!";
         }
+
+        _knockoutUntil = Time.time + 1.6f;
+        _message = "YOU " + _playerWins + " : " + _rivalWins + " RIVAL";
     }
 
-    private float InitialHeadingTowardsCamera()
+    private void FinishBattle()
     {
-        if (_virtualMode) return 0f;
-        var cameraTransform = Camera.main != null ? Camera.main.transform : null;
-        if (cameraTransform == null) return 0f;
-
-        // Face the car away from the player so GO drives into the scene.
-        var localForward = _arena.InverseTransformDirection(cameraTransform.forward);
-        localForward.y = 0f;
-        if (localForward.sqrMagnitude < 0.0001f) return 0f;
-        return Mathf.Atan2(localForward.x, localForward.z) * Mathf.Rad2Deg;
+        _state = GameState.Finished;
+        _finishPlace = _playerWins >= BattleWinsNeeded ? 1 : 2;
+        _message = (_finishPlace == 1 ? "You win the battle " : "Your rival wins ")
+            + _playerWins + " : " + _rivalWins + ". Tap AGAIN for a rematch.";
     }
 
     /// <summary>
-    /// Random layout with spacing rules that keep the start area clear, leave car-sized gaps
-    /// between barriers and keep every coin reachable. Falls back to a known-good layout.
+    /// Battle bot: rams the player toward the nearest edge, but backs toward the centre
+    /// when it is close to falling off itself.
     /// </summary>
+    private void BattleRivalInput(out float drive, out float steer)
+    {
+        var target = _carPosition;
+        var rivalRadius = _rival.Position.magnitude;
+        if (rivalRadius > _battleRadius - 0.11f)
+            target = Vector2.zero;
+        else if (_carPosition.sqrMagnitude > 0.0001f)
+            target = _carPosition + _carPosition.normalized * 0.08f;
+
+        var toTarget = target - _rival.Position;
+        var desiredHeading = Mathf.Atan2(toTarget.x, toTarget.y) * Mathf.Rad2Deg;
+        var error = Mathf.DeltaAngle(_rival.Heading, desiredHeading);
+        steer = Mathf.Clamp(error / 25f, -1f, 1f);
+        drive = Mathf.Abs(error) < 75f ? 0.9f : 0.5f;
+    }
+
+    private static string FormatTime(float seconds)
+    {
+        var minutes = Mathf.FloorToInt(seconds / 60f);
+        return minutes + ":" + (seconds - minutes * 60f).ToString("00.0");
+    }
+
+    /// <summary>Spreads boost coins around the lap with a little sideways variety each round.</summary>
     private void GenerateLayout()
     {
-        for (var attempt = 0; attempt < 40; attempt++)
-        {
-            if (TryRandomLayout()) return;
-        }
-
-        _obstaclePositions.Clear();
-        _obstaclePositions.Add(new Vector2(-0.18f, 0.12f));
-        _obstaclePositions.Add(new Vector2(0.20f, -0.10f));
-        _obstaclePositions.Add(new Vector2(0.43f, 0.40f));
-        _coinLayout.Clear();
-        _coinLayout.AddRange(new[]
-        {
-            new Vector2(-0.42f, -0.36f), new Vector2(-0.12f, -0.36f),
-            new Vector2(0.22f, -0.34f), new Vector2(0.43f, -0.10f),
-            new Vector2(0.24f, 0.16f), new Vector2(-0.08f, 0.34f),
-            new Vector2(-0.40f, 0.28f), new Vector2(-0.47f, -0.02f)
-        });
-        OrderCoinsAsRoute();
-    }
-
-    private bool TryRandomLayout()
-    {
         _obstaclePositions.Clear();
         _coinLayout.Clear();
-
-        for (var i = 0; i < ObstacleCount; i++)
-        {
-            if (!TryPlacePoint(0.45f, candidate =>
-                    candidate.magnitude >= 0.36f
-                    && MinDistance(candidate, _obstaclePositions) >= 0.40f,
-                    out var point))
-                return false;
-            _obstaclePositions.Add(point);
-        }
-
         for (var i = 0; i < CoinCount; i++)
         {
-            if (!TryPlacePoint(0.50f, candidate =>
-                    candidate.magnitude >= 0.24f
-                    && MinDistance(candidate, _obstaclePositions) >= 0.25f
-                    && MinDistance(candidate, _coinLayout) >= 0.20f,
-                    out var point))
-                return false;
-            _coinLayout.Add(point);
+            var lapFraction = (i + 0.5f) / CoinCount;
+            _coinLayout.Add(RaceTrack.Shared.PointAt(lapFraction, Random.Range(-0.07f, 0.07f)));
+        }
+    }
+
+    // ---------------------------------------------------------------- race logic
+
+    private static void StartLapCounter(Vector2 position, out float laps, out float lastProgress)
+    {
+        lastProgress = RaceTrack.Shared.Progress(position);
+        // Cars start just behind the line, so their progress begins slightly below zero.
+        laps = lastProgress > 0.5f ? lastProgress - 1f : lastProgress;
+    }
+
+    private static void AdvanceLapCounter(Vector2 position, ref float laps, ref float lastProgress)
+    {
+        var progress = RaceTrack.Shared.Progress(position);
+        var delta = progress - lastProgress;
+        if (delta > 0.5f) delta -= 1f;
+        if (delta < -0.5f) delta += 1f;
+        laps += delta; // driving backwards subtracts, so laps cannot be faked
+        lastProgress = progress;
+    }
+
+    private void UpdateRaceProgress()
+    {
+        if (_state == GameState.Racing)
+        {
+            var lapBefore = Mathf.FloorToInt(_playerLaps);
+            AdvanceLapCounter(_carPosition, ref _playerLaps, ref _playerLastProgress);
+            var lapAfter = Mathf.FloorToInt(_playerLaps);
+            if (_playerLaps >= LapCount)
+                FinishRace();
+            else if (lapAfter > lapBefore && lapAfter > 0)
+                ShowHint(lapAfter == LapCount - 1 ? "FINAL LAP!" : "LAP " + (lapAfter + 1) + "/" + LapCount);
         }
 
-        OrderCoinsAsRoute();
-        return true;
+        if (_rival == null || _rival.Finished) return;
+        if (_state != GameState.Racing && _state != GameState.Finished) return;
+
+        AdvanceLapCounter(_rival.Position, ref _rival.Laps, ref _rival.LastProgress);
+        if (_rival.Laps < LapCount) return;
+        _rival.Finished = true;
+        if (_state == GameState.Racing)
+            ShowHint("Your rival has finished. Bring it home!");
     }
 
-    private static bool TryPlacePoint(float extent, System.Func<Vector2, bool> isValid, out Vector2 point)
+    private int PlayerPosition()
     {
-        for (var i = 0; i < 60; i++)
+        if (_state == GameState.Finished) return _finishPlace;
+        if (_rival == null) return 1;
+        return _rival.Laps > _playerLaps ? 2 : 1;
+    }
+
+    /// <summary>
+    /// Simple racing line follower: aim at a point a little further around the lap, ease off in
+    /// corners, and rubber-band slightly so races stay close.
+    /// </summary>
+    private void DriveRival(float dt)
+    {
+        if (_rival == null) return;
+
+        var drive = 0f;
+        var steer = 0f;
+        if (_mode == GameMode.Battle)
         {
-            point = new Vector2(Random.Range(-extent, extent), Random.Range(-extent, extent));
-            if (isValid(point)) return true;
-        }
-
-        point = Vector2.zero;
-        return false;
-    }
-
-    private static float MinDistance(Vector2 point, List<Vector2> others)
-    {
-        var min = float.MaxValue;
-        for (var i = 0; i < others.Count; i++)
-            min = Mathf.Min(min, Vector2.Distance(point, others[i]));
-        return min;
-    }
-
-    // Nearest-neighbour order from the start gives the guide line a sensible driving route.
-    private void OrderCoinsAsRoute()
-    {
-        var remaining = new List<Vector2>(_coinLayout);
-        _coinLayout.Clear();
-        var current = Vector2.zero;
-        while (remaining.Count > 0)
-        {
-            var bestIndex = 0;
-            for (var i = 1; i < remaining.Count; i++)
+            if (_rival.Fall > 0f)
             {
-                if ((remaining[i] - current).sqrMagnitude < (remaining[bestIndex] - current).sqrMagnitude)
-                    bestIndex = i;
+                _rival.Position += _rival.Position.normalized * (0.2f * dt);
+                return;
             }
 
-            current = remaining[bestIndex];
-            _coinLayout.Add(current);
-            remaining.RemoveAt(bestIndex);
+            if (_state == GameState.Racing && _knockoutUntil <= 0f)
+                BattleRivalInput(out drive, out steer);
+            _rival.Steer = steer;
+            StepCar(ref _rival.Position, ref _rival.Heading, ref _rival.Speed, drive, steer, 1f, dt, false);
+            ApplyKnock(ref _rival.Position, ref _rival.Knock, dt);
+            return;
         }
+
+        var racing = _state == GameState.Racing || (_state == GameState.Finished && !_rival.Finished);
+        if (racing)
+        {
+            var track = RaceTrack.Shared;
+            var lane = Mathf.Sin(_raceTime * 0.45f) * 0.045f;
+            var target = track.PointAt(track.Progress(_rival.Position) + 0.055f, lane);
+            var toTarget = target - _rival.Position;
+            var desiredHeading = Mathf.Atan2(toTarget.x, toTarget.y) * Mathf.Rad2Deg;
+            steer = Mathf.Clamp(Mathf.DeltaAngle(_rival.Heading, desiredHeading) / 20f, -1f, 1f);
+
+            var gap = _rival.Laps - _playerLaps;
+            var skill = gap > 0.15f ? 0.88f : gap < -0.08f ? 1.10f : 0.98f;
+            drive = skill * (1f - 0.35f * Mathf.Abs(steer));
+        }
+
+        _rival.Steer = steer;
+        StepCar(ref _rival.Position, ref _rival.Heading, ref _rival.Speed, drive, steer, 1f, dt, true);
+    }
+
+    /// <summary>Cars bump and push each other apart instead of driving through one another.</summary>
+    private void ResolveCarContact()
+    {
+        if (_rival == null || _car == null || _playerFall > 0f || _rival.Fall > 0f) return;
+
+        var delta = _rival.Position - _carPosition;
+        var distance = delta.magnitude;
+        if (distance >= CarContactDistance || distance < 0.0001f) return;
+
+        var normal = delta / distance;
+        var push = (CarContactDistance - distance) * 0.5f;
+        _carPosition -= normal * push;
+        _rival.Position += normal * push;
+
+        if (_mode == GameMode.Battle)
+        {
+            // Ramming transfers momentum: the car that hits harder sends the other one flying.
+            var playerVelocity = HeadingToForward(_carHeading) * _speed + _playerKnock;
+            var rivalVelocity = HeadingToForward(_rival.Heading) * _rival.Speed + _rival.Knock;
+            var playerAttack = Mathf.Max(0f, Vector2.Dot(playerVelocity, normal));
+            var rivalAttack = Mathf.Max(0f, Vector2.Dot(rivalVelocity, -normal));
+            if (playerAttack + rivalAttack < 0.02f) return;
+
+            _rival.Knock += normal * (playerAttack * 1.45f + rivalAttack * 0.2f);
+            _playerKnock -= normal * (rivalAttack * 1.45f + playerAttack * 0.2f);
+            _speed *= 0.55f;
+            _rival.Speed *= 0.55f;
+            if (playerAttack > 0.15f || rivalAttack > 0.15f)
+                ShowHint(playerAttack >= rivalAttack ? "SMASH!" : "Ouch!");
+            return;
+        }
+
+        RaceTrack.Shared.ConstrainToRails(ref _carPosition, ProceduralCarFactory.CarHalfWidth);
+        RaceTrack.Shared.ConstrainToRails(ref _rival.Position, ProceduralCarFactory.CarHalfWidth);
+        _speed *= 0.93f;
+        _rival.Speed *= 0.93f;
+    }
+
+    /// <summary>Knock-back from hits slides a car and fades out quickly.</summary>
+    private static void ApplyKnock(ref Vector2 position, ref Vector2 knock, float dt)
+    {
+        position += knock * dt;
+        knock *= Mathf.Exp(-3.2f * dt);
+        position = ClampInsideArena(position, 0f);
+    }
+
+    private void ApplyRivalTransform()
+    {
+        if (_rival == null || _rival.Car == null) return;
+        var drop = _rival.Fall * _rival.Fall * 1.4f;
+        _rival.Car.localPosition = new Vector3(_rival.Position.x, 0.002f - drop, _rival.Position.y);
+        _rival.Car.localRotation = Quaternion.Euler(0f, _rival.Heading, 0f) * Quaternion.Euler(_rival.Fall * 70f, 0f, 0f);
     }
 
     // ---------------------------------------------------------------- driving
@@ -605,48 +908,78 @@ public sealed class ARDemoController : MonoBehaviour
         if (_car == null) return;
 
         var dt = Time.deltaTime;
-        var targetSpeed = _driveInput * MaxSpeed;
-        float rate;
-        if (Mathf.Abs(targetSpeed) < 0.001f)
-            rate = RollingFriction;
-        else if (Mathf.Abs(_speed) > 0.01f && Mathf.Sign(targetSpeed) != Mathf.Sign(_speed))
-            rate = Braking;
-        else
-            rate = Acceleration;
-        _speed = Mathf.MoveTowards(_speed, targetSpeed, rate * dt);
-
-        if (Mathf.Abs(_speed) < 0.0005f)
+        if (_playerFall > 0f)
         {
-            _speed = 0f;
-            ApplyCarTransform();
+            _carPosition += _carPosition.normalized * (0.2f * dt);
             return;
         }
 
-        // Steering authority grows with speed and flips when reversing, like a real car.
-        var steerAuthority = Mathf.Clamp01(Mathf.Abs(_speed) / FullSteerSpeed) * Mathf.Sign(_speed);
-        var heading = _carHeading + _steerInput * TurnSpeed * steerAuthority * dt;
-        var forward = HeadingToForward(heading);
-        var position = ClampInsideArena(_carPosition + forward * (_speed * dt), heading);
-        var travelDirection = forward * Mathf.Sign(_speed);
+        var battle = _mode == GameMode.Battle;
+        var position = _carPosition;
+        var heading = _carHeading;
+        var boost = Time.time < _boostUntil ? BoostMultiplier : 1f;
+        StepCar(ref position, ref heading, ref _speed, _driveInput, _steerInput, boost, dt, !battle);
+        if (battle)
+            ApplyKnock(ref position, ref _playerKnock, dt);
+        if (Mathf.Abs(_speed) < 0.0001f && _playerKnock.sqrMagnitude < 0.0001f) return;
 
+        // In AR, real walls and objects seen by the depth sensor can still stop the car.
+        var travelDirection = HeadingToForward(heading) * Mathf.Sign(_speed);
         if (IsBlocked(position, heading, travelDirection))
         {
             _speed = 0f;
             ShowHint("Bump! Back up and steer around it.");
-        }
-        else
-        {
-            _carPosition = position;
-            _carHeading = heading;
+            return;
         }
 
-        ApplyCarTransform();
+        _carPosition = position;
+        _carHeading = heading;
+    }
+
+    /// <summary>Shared toy-car physics for the player and the rival.</summary>
+    private static void StepCar(ref Vector2 position, ref float heading, ref float speed,
+        float drive, float steer, float speedMultiplier, float dt, bool onTrack)
+    {
+        // Leaving the asphalt onto the grass costs speed (the battle ring has no grass).
+        var onRoad = !onTrack
+            || Mathf.Abs(RaceTrack.Shared.LateralOffset(position)) <= RaceTrack.RoadHalfWidth + 0.016f;
+        var targetSpeed = drive * MaxSpeed * speedMultiplier * (onRoad ? 1f : 0.58f);
+        float rate;
+        if (Mathf.Abs(targetSpeed) < 0.001f)
+            rate = RollingFriction;
+        else if (Mathf.Abs(speed) > 0.01f && Mathf.Sign(targetSpeed) != Mathf.Sign(speed))
+            rate = Braking;
+        else
+            rate = Acceleration;
+        speed = Mathf.MoveTowards(speed, targetSpeed, rate * dt);
+
+        // Only settle to a stop when coasting; a tiny speed under throttle is the car pulling away.
+        if (Mathf.Abs(speed) < 0.0005f && Mathf.Abs(targetSpeed) < 0.001f)
+        {
+            speed = 0f;
+            return;
+        }
+
+        // Steering authority grows with speed and flips when reversing, like a real car.
+        var steerAuthority = Mathf.Clamp01(Mathf.Abs(speed) / FullSteerSpeed) * Mathf.Sign(speed);
+        heading += steer * TurnSpeed * steerAuthority * dt;
+        position += HeadingToForward(heading) * (speed * dt);
+        if (onTrack && RaceTrack.Shared.ConstrainToRails(ref position, ProceduralCarFactory.CarHalfWidth))
+        {
+            // Scrape along the guard rail, but keep enough speed to steer back onto the road.
+            var scrapeSpeed = Mathf.Sign(speed) * Mathf.Min(Mathf.Abs(speed), MaxSpeed * 0.4f);
+            speed = Mathf.MoveTowards(speed, scrapeSpeed, 2.5f * dt);
+        }
+
+        position = ClampInsideArena(position, heading);
     }
 
     private void ApplyCarTransform()
     {
-        _car.localPosition = new Vector3(_carPosition.x, 0.01f, _carPosition.y);
-        _car.localRotation = Quaternion.Euler(0f, _carHeading, 0f);
+        // The wheels now touch y = 0, so the car sits on the arena instead of hovering.
+        var drop = _playerFall * _playerFall * 1.4f;
+        _car.localPosition = new Vector3(_carPosition.x, 0.002f - drop, _carPosition.y);
+        _car.localRotation = Quaternion.Euler(0f, _carHeading, 0f) * Quaternion.Euler(_playerFall * 70f, 0f, 0f);
     }
 
     private static Vector2 HeadingToForward(float headingDegrees)
@@ -688,7 +1021,7 @@ public sealed class ARDemoController : MonoBehaviour
 
         return _depthDetector != null
             && _depthDetector.IsPathBlocked(_arena.TransformPoint(localPosition),
-                _arena.TransformDirection(localTravel), 0.19f, 0.12f);
+                _arena.TransformDirection(localTravel), ProceduralCarFactory.CarHalfLength + 0.03f, ProceduralCarFactory.CarHalfWidth + 0.01f);
     }
 
     /// <summary>Separating-axis test between the car's oriented box and each square barrier.</summary>
@@ -730,7 +1063,7 @@ public sealed class ARDemoController : MonoBehaviour
 
         // Probe slightly ahead of the car at bumper height. AR planes are geometric
         // observations, so this only guards against flat surfaces the device has tracked.
-        var probeLocal = candidateCarPosition + localTravelDirection * 0.19f + Vector3.up * 0.07f;
+        var probeLocal = candidateCarPosition + localTravelDirection * (ProceduralCarFactory.CarHalfLength + 0.012f) + Vector3.up * 0.05f;
         var probeWorld = _arena.TransformPoint(probeLocal);
 
         foreach (var plane in _planeManager.trackables)
@@ -785,21 +1118,22 @@ public sealed class ARDemoController : MonoBehaviour
         var forward = HeadingToForward(_carHeading);
         var right = HeadingToRight(_carHeading);
 
-        for (var i = _coins.Count - 1; i >= 0; i--)
+        for (var i = 0; i < _coins.Count; i++)
         {
             var coin = _coins[i];
-            if (coin == null)
+            if (coin == null) continue;
+            if (!coin.gameObject.activeSelf)
             {
-                _coins.RemoveAt(i);
+                if (Time.time >= _coinRespawnAt[i]) coin.gameObject.SetActive(true);
                 continue;
             }
 
             coin.Rotate(0f, 100f * Time.deltaTime, 0f, Space.Self);
             var basePosition = coin.localPosition;
-            basePosition.y = 0.075f + Mathf.Sin(Time.time * 3f + i) * 0.012f;
+            basePosition.y = 0.06f + Mathf.Sin(Time.time * 3f + i) * 0.01f;
             coin.localPosition = basePosition;
 
-            if (_state != GameState.Playing) continue;
+            if (_state != GameState.Racing) continue;
 
             // Collect when any part of the car body touches the coin, not just its centre.
             var delta = new Vector2(basePosition.x, basePosition.z) - _carPosition;
@@ -811,70 +1145,16 @@ public sealed class ARDemoController : MonoBehaviour
             if ((delta - closest).magnitude > ProceduralCarFactory.CoinRadius + 0.02f)
                 continue;
 
-            Destroy(coin.gameObject);
-            _coins.RemoveAt(i);
+            // Coins are boost pads: they vanish for a few seconds and then come back.
+            coin.gameObject.SetActive(false);
+            _coinRespawnAt[i] = Time.time + CoinRespawnSeconds;
             _score++;
-            if (_score >= CoinCount)
-                FinishRound(true);
-            else
-                ShowHint("Coin! " + (CoinCount - _score) + " to go.");
+            _boostUntil = Time.time + BoostSeconds;
+            ShowHint("BOOST!");
         }
     }
 
     // ---------------------------------------------------------------- arena visuals
-
-    private void CreateGuideRoute()
-    {
-        if (_guideMaterial == null)
-        {
-            var shader = Shader.Find("Sprites/Default");
-            if (shader == null) shader = Shader.Find("Unlit/Color");
-            if (shader == null) return;
-            _guideMaterial = new Material(shader) { color = new Color(0.12f, 0.88f, 0.78f, 0.62f) };
-        }
-
-        var routeObject = new GameObject("Coin Guide Route");
-        routeObject.transform.SetParent(_roundRoot, false);
-        var line = routeObject.AddComponent<LineRenderer>();
-        line.useWorldSpace = false;
-        line.loop = false;
-        line.positionCount = _coins.Count + 1;
-        line.startWidth = 0.009f;
-        line.endWidth = 0.006f;
-        line.numCapVertices = 2;
-        line.sharedMaterial = _guideMaterial;
-        line.startColor = _guideMaterial.color;
-        line.endColor = _guideMaterial.color;
-
-        line.SetPosition(0, new Vector3(0f, 0.014f, 0f));
-        for (var i = 0; i < _coins.Count; i++)
-        {
-            var point = _coins[i].localPosition;
-            point.y = 0.014f;
-            line.SetPosition(i + 1, point);
-        }
-    }
-
-    private void CreateBoundary()
-    {
-        var lineMaterial = ProceduralCarFactory.GetMaterial(new Color(0.18f, 0.82f, 0.72f));
-        MakeBoundaryLine("North Boundary", new Vector3(0f, 0.006f, HalfArena), new Vector3(1.5f, 0.008f, 0.012f), lineMaterial);
-        MakeBoundaryLine("South Boundary", new Vector3(0f, 0.006f, -HalfArena), new Vector3(1.5f, 0.008f, 0.012f), lineMaterial);
-        MakeBoundaryLine("East Boundary", new Vector3(HalfArena, 0.006f, 0f), new Vector3(0.012f, 0.008f, 1.5f), lineMaterial);
-        MakeBoundaryLine("West Boundary", new Vector3(-HalfArena, 0.006f, 0f), new Vector3(0.012f, 0.008f, 1.5f), lineMaterial);
-    }
-
-    private void MakeBoundaryLine(string objectName, Vector3 position, Vector3 scale, Material material)
-    {
-        var line = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        line.name = objectName;
-        line.transform.SetParent(_arena, false);
-        line.transform.localPosition = position;
-        line.transform.localScale = scale;
-        if (material != null)
-            line.GetComponent<Renderer>().sharedMaterial = material;
-        line.GetComponent<Collider>().enabled = false;
-    }
 
     /// <summary>
     /// Hides the teal plane tint while playing so the arena stays readable; planes keep
@@ -901,8 +1181,15 @@ public sealed class ARDemoController : MonoBehaviour
         _roundRoot = null;
         _anchor = null;
         _car = null;
+        _rival = null;
+        _trackVisual = null;
+        _battleRing = null;
+        _knockoutUntil = 0f;
+        _playerFall = 0f;
+        _playerKnock = Vector2.zero;
         _depthDetector?.SetArena(null);
         _coins.Clear();
+        _coinRespawnAt.Clear();
         _obstaclePositions.Clear();
         _score = 0;
         _speed = 0f;
@@ -923,7 +1210,7 @@ public sealed class ARDemoController : MonoBehaviour
     {
         _leftHeld = _rightHeld = _goHeld = _backHeld = false;
         var action = ControlAction.None;
-        var roundOver = _state == GameState.Won || _state == GameState.Lost;
+        var roundOver = _state == GameState.Finished;
 
         for (var i = 0; i < Input.touchCount; i++)
         {
@@ -936,6 +1223,7 @@ public sealed class ARDemoController : MonoBehaviour
             {
                 if (_resetRect.Contains(point)) action = ControlAction.Reset;
                 else if (roundOver && Expand(_againRect).Contains(point)) action = ControlAction.Again;
+                else if (CanChangeMode() && _modeRect.Contains(point)) action = ControlAction.Mode;
             }
 
             if (!roundOver) ApplyHeldPoint(point);
@@ -947,6 +1235,7 @@ public sealed class ARDemoController : MonoBehaviour
         {
             if (_resetRect.Contains(mousePoint)) action = ControlAction.Reset;
             else if (roundOver && Expand(_againRect).Contains(mousePoint)) action = ControlAction.Again;
+            else if (CanChangeMode() && _modeRect.Contains(mousePoint)) action = ControlAction.Mode;
         }
 
         if (!roundOver)
@@ -969,6 +1258,9 @@ public sealed class ARDemoController : MonoBehaviour
         _driveInput = _goHeld == _backHeld ? 0f : _goHeld ? 1f : ReverseInput;
         return action;
     }
+
+    // The mode can be switched on the starting grid or after a finish, never mid-race.
+    private bool CanChangeMode() => _state == GameState.Ready || _state == GameState.Finished;
 
     private void ApplyHeldPoint(Vector2 guiPoint)
     {
@@ -1012,6 +1304,7 @@ public sealed class ARDemoController : MonoBehaviour
         _goRect = new Rect(Screen.width - buttonWidth - margin, y, buttonWidth, buttonHeight);
         _backRect = new Rect(_goRect.x - buttonWidth - gap, y, buttonWidth, buttonHeight);
         _resetRect = new Rect(_goRect.x, y - 42f * s - 10f * s, buttonWidth, 42f * s);
+        _modeRect = new Rect(margin, y - 42f * s - 10f * s, buttonWidth * 2f + gap, 42f * s);
 
         var noArWidth = 220f * s;
         var noArHeight = 54f * s;
@@ -1042,14 +1335,26 @@ public sealed class ARDemoController : MonoBehaviour
         GUI.color = previousGuiColor;
         GUI.contentColor = Color.white;
 
-        var title = "COINS " + _score + "/" + CoinCount;
-        if (_arena != null)
-            title += "  •  TIME " + Mathf.CeilToInt(_timeLeft);
-        title += "  •  BEST " + (_bestTime > 0f ? _bestTime.ToString("0.0") + " s" : "--");
+        var title = "AR RACER";
+        if (_arena != null && _mode == GameMode.Battle)
+        {
+            title = "BATTLE  •  YOU " + _playerWins + " : " + _rivalWins + " RIVAL  •  RING "
+                + Mathf.RoundToInt(_battleRadius * 200f) + " cm";
+        }
+        else
+        {
+            if (_arena != null)
+            {
+                var lap = Mathf.Clamp(Mathf.FloorToInt(_playerLaps) + 1, 1, LapCount);
+                title = "LAP " + lap + "/" + LapCount + "  •  P" + PlayerPosition() + "/2  •  " + FormatTime(_raceTime);
+            }
+
+            title += "  •  BEST " + (_bestTime > 0f ? FormatTime(_bestTime) : "--");
+        }
         GUI.Label(new Rect(textX, margin * 1.35f, textWidth, 24f * scale), title, _titleStyle);
 
         var message = _arena == null ? GetPlacingMessage()
-            : _hint != null && Time.time < _hintUntil && _state == GameState.Playing ? _hint : _message;
+            : _hint != null && Time.time < _hintUntil && _state == GameState.Racing ? _hint : _message;
         GUI.Label(new Rect(textX, margin * 1.35f + 27f * scale, textWidth, 32f * scale), message, _messageStyle);
 
         var planeCount = _planeManager != null ? _planeManager.trackables.count : 0;
@@ -1078,9 +1383,28 @@ public sealed class ARDemoController : MonoBehaviour
             return;
         }
 
-        if (_state == GameState.Won || _state == GameState.Lost)
+        var battle = _mode == GameMode.Battle;
+        var bigText = _state == GameState.Countdown ? Mathf.CeilToInt(_countdown).ToString()
+            : _state == GameState.Racing && _knockoutUntil > 0f ? _knockoutText
+            : _state == GameState.Racing && Time.time < _goFlashUntil ? (battle ? "PUSH!" : "GO!")
+            : _state == GameState.Finished
+                ? (battle ? (_finishPlace == 1 ? "YOU WIN" : "YOU LOSE") : (_finishPlace == 1 ? "1ST" : "2ND"))
+            : null;
+        if (bigText != null)
         {
-            var againColor = _state == GameState.Won
+            GUI.color = Color.white;
+            var bigRect = new Rect(0f, Screen.height * 0.30f, Screen.width, 110f * scale);
+            GUI.contentColor = new Color(0f, 0f, 0f, 0.55f);
+            GUI.Label(new Rect(bigRect.x + 3f * scale, bigRect.y + 3f * scale, bigRect.width, bigRect.height), bigText, _bigStyle);
+            GUI.contentColor = _state == GameState.Finished && _finishPlace == 1
+                ? new Color(1f, 0.82f, 0.18f) : Color.white;
+            GUI.Label(bigRect, bigText, _bigStyle);
+            GUI.contentColor = Color.white;
+        }
+
+        if (_state == GameState.Finished)
+        {
+            var againColor = _finishPlace == 1
                 ? new Color(0.95f, 0.66f, 0.10f, 0.96f)
                 : new Color(0.08f, 0.67f, 0.34f, 0.96f);
             DrawControl(_againRect, "AGAIN", againColor, false, _buttonStyle);
@@ -1095,6 +1419,11 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         DrawControl(_resetRect, "RESET", new Color(0.12f, 0.18f, 0.23f, 0.88f), false, _smallButtonStyle);
+        if (CanChangeMode())
+        {
+            DrawControl(_modeRect, battle ? "MODE: BATTLE  ⇄" : "MODE: RACE  ⇄",
+                new Color(0.42f, 0.20f, 0.70f, 0.92f), false, _smallButtonStyle);
+        }
 
         GUI.color = previousGuiColor;
         GUI.contentColor = previousContentColor;
@@ -1124,6 +1453,13 @@ public sealed class ARDemoController : MonoBehaviour
             normal = { textColor = Color.white }
         };
         _smallButtonStyle = new GUIStyle(_buttonStyle) { fontSize = Mathf.RoundToInt(14f * _uiScale) };
+        _bigStyle = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = Mathf.RoundToInt(76f * _uiScale),
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleCenter,
+            normal = { textColor = Color.white }
+        };
     }
 
     private static GUIStyle MakeLabelStyle(float fontSize, bool bold)

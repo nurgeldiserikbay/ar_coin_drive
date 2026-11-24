@@ -1,17 +1,22 @@
 # AR Coin Drive
 
-A small Unity AR prototype for Android. The player scans and taps an upward-facing horizontal surface, the play area is attached to an AR anchor, and each round is a 45-second race to collect 8 floating coins inside a visible 1.5 m play area while steering around toy barriers. Every round gets a new random layout, and the fastest full clear is saved as the best time.
+A small Unity AR toy-car game for Android. The player scans and taps a horizontal surface, a toy racetrack or battle ring is drawn on it (attached to an AR anchor), and the player races or battles a computer rival. Without AR the same game runs on a landscaped virtual island.
+
+## Modes
+
+- **Race:** five laps of a closed toy track against a rival car. Hold GO for a 3-2-1 countdown. Laps only count when driving forward, coins on the road give a short speed boost and respawn, cars bump each other, and the best finishing time is saved.
+- **Battle:** a round sumo ring that shrinks from 124 cm to 60 cm across during a round. Ram the rival to knock it out of the ring; harder hits send cars further. First to three knockouts wins the match.
+- Switch modes with the MODE button on the starting grid or after a finish.
 
 ## Included
 
 - Unity 6 project scaffold with AR Foundation and ARCore XR packages pinned to 6.6.2.
 - Editor menu command that generates the AR session, camera rig, visible translucent plane mesh, horizontal and vertical plane detection, raycast and occlusion managers, and demo scene.
-- Optional environment-depth sampling that can stop the car near visible obstacles on supported devices.
-- Procedural lightweight car and coin models; no third-party model download is required for the first test.
-- Multi-touch steering with forward and reverse (hold a steering arrow and GO/BACK with two thumbs at once; WASD/arrow keys in the Editor), a guided coin route, three virtual toy barriers, reset button, virtual area boundaries, translucent detected-plane visualization, and an AR tracking, camera-frame, plane, anchor, and depth diagnostic readout.
-- Round flow: the timer starts on the first GO or steering input; when all coins are collected or time runs out, AGAIN starts a new random layout on the same anchor and RESET returns to floor scanning.
-- Toy RC-car handling: acceleration, braking and rolling friction; the car turns only while moving and steering flips in reverse. Collisions use the car's rotated body box against each barrier, and coins are collected when any part of the car touches them.
-- Procedural model materials come from one shared `Resources/ARCoinDriveLit` material (Standard shader) and are cached per colour, so the shader is included in builds and resets do not leak materials.
+- Optional environment-depth sampling that can stop the player's car near visible obstacles on supported devices.
+- Procedural models built in code: a glossy toy sports car with rolling and steering wheels and body roll (`ProceduralCarModel`, `ProceduralCarRig`), the race track with curbs, start grid and guard rails (`RaceTrack`), and the battle ring (`BattleArena`). No third-party models are required.
+- `Resources/ARCoinDriveToon.shader`: a mobile paint shader with wrapped light, a glossy clear coat and a procedural sky reflection; every procedural material uses it through `Resources/ARCoinDriveLit.mat`, so it ships in builds.
+- Multi-touch controls: hold a steering arrow and GO/BACK with two thumbs at once (WASD/arrow keys in the Editor).
+- Toy RC-car handling shared by the player and the rival: acceleration, braking, rolling friction, steering only while moving, slower on grass, and sliding along guard rails.
 
 ## Open and run
 
