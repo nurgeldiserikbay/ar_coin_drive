@@ -1,5 +1,10 @@
 # AR Coin Drive
 
+![AR Coin Drive logo](Branding/AR-Coin-Drive-Logo.png)
+
+- [Transparent app icon foreground layer (PNG)](Branding/app-icon-foreground.png)
+- [Opaque app icon background layer (PNG)](Branding/app-icon-background.png)
+
 A small Unity AR toy-car game for Android. The player scans and taps a horizontal surface, a toy racetrack or battle ring is drawn on it (attached to an AR anchor), and the player races or battles a computer rival. Without AR the same game runs on a landscaped virtual island.
 
 ## Modes
