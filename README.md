@@ -1,8 +1,6 @@
 # AR Coin Drive
 
-![AR Coin Drive logo](Branding/ar-coin-drive-logo.svg)
-
-[Square app icon (SVG)](Branding/app-icon.svg)
+![AR Coin Drive logo](Branding/AR-Coin-Drive-Logo.png)
 
 A small Unity AR prototype for Android. The first playable loop lets the player scan and tap an upward-facing horizontal surface, attach the play area to an AR anchor, drive around toy barriers inside a visible 1.5 m play area, and collect floating coins.
 
