@@ -7,6 +7,7 @@ A small Unity AR toy-car game for Android. The player scans and taps a horizonta
 - **Race:** five laps of a closed toy track against a rival car. Hold GO for a 3-2-1 countdown. Laps only count when driving forward, coins on the road give a short speed boost and respawn, cars bump each other, and the best finishing time is saved.
 - **Battle:** a round sumo ring that shrinks from 124 cm to 60 cm across during a round. Ram the rival to knock it out of the ring; harder hits send cars further. First to three knockouts wins the match.
 - Switch modes with the MODE button on the starting grid or after a finish.
+- **Two players, no server:** both phones join the same Wi-Fi, or one phone turns on its hotspot and the other connects to it. Each player places the track on their own floor (or uses the virtual island). One taps 2 PLAYERS > HOST, the other 2 PLAYERS > JOIN; the joining phone finds the host automatically by sweeping its local subnet over UDP port 47777. The host runs the game and picks the mode; the other phone sends its controls and shows the host's game from its own car. Works in both Race and Battle. If the link drops for 4 seconds, the host goes back to racing the computer.
 
 ## Included
 

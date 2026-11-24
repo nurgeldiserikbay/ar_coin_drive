@@ -14,7 +14,7 @@ public sealed class ARDemoController : MonoBehaviour
 {
     private enum GameState { Placing, Ready, Countdown, Racing, Finished }
     private enum GameMode { Race, Battle }
-    private enum ControlAction { None, Reset, Again, Mode }
+    private enum ControlAction { None, Reset, Again, Mode, Players, Host, Join }
 
     private sealed class Rival
     {
@@ -26,6 +26,7 @@ public sealed class ARDemoController : MonoBehaviour
         public float Steer;
         public Vector2 Knock;
         public float Fall;
+        public float BoostUntil;
         public float Laps;
         public float LastProgress;
         public bool Finished;
@@ -102,6 +103,15 @@ public sealed class ARDemoController : MonoBehaviour
     private float _knockoutUntil;
     private string _knockoutText;
     private Rect _modeRect;
+
+    // Two players on the local network (see LanSession).
+    private LanSession _net;
+    private bool _netWasConnected;
+    private bool _snapNetworkCars;
+    private bool _mpPanelOpen;
+    private Rect _mpRect;
+    private Rect _hostRect;
+    private Rect _joinRect;
 
     private GameState _state = GameState.Placing;
     private Vector2 _carPosition;
@@ -336,12 +346,40 @@ public sealed class ARDemoController : MonoBehaviour
             return;
         }
 
+        UpdateNetwork();
         var action = ReadControls();
+        if (action == ControlAction.Players)
+        {
+            if (_net != null) StopNetwork("Left the two-player game. Racing the computer again.");
+            else _mpPanelOpen = !_mpPanelOpen;
+            return;
+        }
+
+        if (action == ControlAction.Host || action == ControlAction.Join)
+        {
+            StartNetwork(action == ControlAction.Host);
+            return;
+        }
+
+        if (IsClient)
+        {
+            // The host runs the game; this phone only sends controls and shows the result.
+            if (action == ControlAction.Reset)
+            {
+                StopNetwork("Left the two-player game.");
+                if (!_virtualMode) ResetGame();
+                return;
+            }
+
+            UpdateClient(Time.deltaTime);
+            return;
+        }
+
         if (action == ControlAction.Reset)
         {
             // The same touch must not also place a new arena this frame.
             // The virtual table has nothing to re-scan, so RESET just starts a new round there.
-            if (_virtualMode) StartRound();
+            if (_virtualMode || IsHostOnline) StartRound();
             else ResetGame();
             return;
         }
@@ -408,6 +446,8 @@ public sealed class ARDemoController : MonoBehaviour
         {
             UpdateBattle(dt);
         }
+
+        SendStateToClient();
     }
 
     // ---------------------------------------------------------------- placement
@@ -599,7 +639,8 @@ public sealed class ARDemoController : MonoBehaviour
         _state = GameState.Finished;
         var place = _rival != null && _rival.Finished ? 2 : 1;
         _finishPlace = place;
-        _newBest = _bestTime <= 0f || _raceTime < _bestTime;
+        var playerFinished = _playerLaps >= LapCount;
+        _newBest = playerFinished && (_bestTime <= 0f || _raceTime < _bestTime);
         if (_newBest)
         {
             _bestTime = _raceTime;
@@ -609,6 +650,257 @@ public sealed class ARDemoController : MonoBehaviour
 
         _message = (place == 1 ? "1st place! " : "2nd place. ") + "Time " + FormatTime(_raceTime)
             + (_newBest ? "  NEW BEST!" : "") + "  Tap AGAIN to race again.";
+    }
+
+    // ---------------------------------------------------------------- two players
+
+    private bool IsHostOnline => _net != null && _net.Role == LanSession.SessionRole.Host && _net.Connected;
+    private bool IsClient => _net != null && _net.Role == LanSession.SessionRole.Client;
+
+    private void ReadRemoteInput(out float drive, out float steer)
+    {
+        drive = Mathf.Clamp(_net.RemoteDrive, ReverseInput, 1f);
+        steer = Mathf.Clamp(_net.RemoteSteer, -1f, 1f);
+    }
+
+    private void StartNetwork(bool host)
+    {
+        _mpPanelOpen = false;
+        try
+        {
+            _net = host ? LanSession.Host() : LanSession.Join();
+            _netWasConnected = false;
+            _message = host
+                ? "Hosting. On the other phone tap 2 PLAYERS > JOIN (same Wi-Fi or your hotspot)."
+                : "Looking for a host on this Wi-Fi or hotspot...";
+        }
+        catch (System.Exception exception)
+        {
+            _net = null;
+            _message = "Could not open the network: " + exception.Message;
+        }
+    }
+
+    private void StopNetwork(string message)
+    {
+        _net?.Dispose();
+        _net = null;
+        _netWasConnected = false;
+        _mpPanelOpen = false;
+        StartRound();
+        _message = message;
+    }
+
+    /// <summary>Polls the link and reacts to players joining or dropping out.</summary>
+    private void UpdateNetwork()
+    {
+        if (_net == null) return;
+        _net.Poll(Time.unscaledTime);
+
+        if (_net.LostConnection)
+        {
+            StopNetwork("The other player disconnected. Back to racing the computer.");
+            return;
+        }
+
+        if (!_net.Connected || _netWasConnected) return;
+        _netWasConnected = true;
+        StartRound();
+        _snapNetworkCars = true;
+        _message = _net.Role == LanSession.SessionRole.Host
+            ? "Player 2 joined! Pick a MODE, then hold GO to start."
+            : "Connected! Waiting for the host to start.";
+    }
+
+    private const int StatePacketSize = 128;
+    private readonly byte[] _statePacket = new byte[StatePacketSize];
+    private float _nextStateSend;
+
+    /// <summary>Host side: sends the whole game state to the client about 30 times a second.</summary>
+    private void SendStateToClient()
+    {
+        if (!IsHostOnline || _rival == null || Time.unscaledTime < _nextStateSend) return;
+        _nextStateSend = Time.unscaledTime + 1f / 30f;
+
+        using (var stream = new System.IO.MemoryStream(_statePacket))
+        using (var writer = new System.IO.BinaryWriter(stream))
+        {
+            writer.Write((byte)0); // packet type, filled in by LanSession
+            writer.Write((byte)_mode);
+            writer.Write((byte)_state);
+            writer.Write(_countdown);
+            writer.Write(_raceTime);
+            writer.Write(_battleRadius);
+            writer.Write((byte)(_knockoutUntil <= 0f ? 0 : _playerFall > 0f ? 1 : 2));
+            WriteCar(writer, _carPosition, _carHeading, _speed, _steerInput, _playerFall, _playerLaps);
+            WriteCar(writer, _rival.Position, _rival.Heading, _rival.Speed, _rival.Steer, _rival.Fall, _rival.Laps);
+            writer.Write((byte)_playerWins);
+            writer.Write((byte)_rivalWins);
+            writer.Write((byte)_finishPlace);
+            writer.Write(Mathf.Max(0f, _goFlashUntil - Time.time));
+            var coinBits = 0;
+            for (var i = 0; i < _coins.Count && i < 16; i++)
+                if (_coins[i] != null && _coins[i].gameObject.activeSelf) coinBits |= 1 << i;
+            writer.Write((ushort)coinBits);
+            writer.Write(Time.time < _rival.BoostUntil);
+            _net.SendState(_statePacket, (int)stream.Position);
+        }
+    }
+
+    private static void WriteCar(System.IO.BinaryWriter writer, Vector2 position, float heading, float speed,
+        float steer, float fall, float laps)
+    {
+        writer.Write(position.x);
+        writer.Write(position.y);
+        writer.Write(heading);
+        writer.Write(speed);
+        writer.Write(steer);
+        writer.Write(fall);
+        writer.Write(laps);
+    }
+
+    private struct NetCar
+    {
+        public Vector2 Position;
+        public float Heading;
+        public float Speed;
+        public float Steer;
+        public float Fall;
+        public float Laps;
+    }
+
+    private static NetCar ReadCar(System.IO.BinaryReader reader) => new NetCar
+    {
+        Position = new Vector2(reader.ReadSingle(), reader.ReadSingle()),
+        Heading = reader.ReadSingle(),
+        Speed = reader.ReadSingle(),
+        Steer = reader.ReadSingle(),
+        Fall = reader.ReadSingle(),
+        Laps = reader.ReadSingle()
+    };
+
+    private NetCar _netMine;
+    private NetCar _netOther;
+
+    /// <summary>
+    /// Client side: sends controls and shows the host's simulation. The host's "rival" car is
+    /// this player, so everything is mirrored into this phone's point of view.
+    /// </summary>
+    private void UpdateClient(float dt)
+    {
+        _net.SendInput(_driveInput, _steerInput);
+
+        var packet = _net.TakeState();
+        if (packet != null)
+            ApplyHostState(packet);
+
+        // Smoothly follow the latest reported positions between network updates.
+        var follow = _snapNetworkCars ? 1f : 1f - Mathf.Exp(-18f * dt);
+        _snapNetworkCars = false;
+        _carPosition = Vector2.Lerp(_carPosition, _netMine.Position, follow);
+        _carHeading = Mathf.LerpAngle(_carHeading, _netMine.Heading, follow);
+        _speed = _netMine.Speed;
+        if (_rival != null)
+        {
+            _rival.Position = Vector2.Lerp(_rival.Position, _netOther.Position, follow);
+            _rival.Heading = Mathf.LerpAngle(_rival.Heading, _netOther.Heading, follow);
+            _rival.Speed = _netOther.Speed;
+            _rival.Steer = _netOther.Steer;
+        }
+
+        ApplyCarTransform();
+        ApplyRivalTransform();
+        if (_carRig != null) _carRig.UpdateVisual(_speed, _netMine.Steer, dt);
+        if (_rival != null && _rival.Rig != null) _rival.Rig.UpdateVisual(_rival.Speed, _rival.Steer, dt);
+        if (_mode == GameMode.Race) AnimateAndCollectCoins(false);
+    }
+
+    private void ApplyHostState(byte[] packet)
+    {
+        using (var reader = new System.IO.BinaryReader(new System.IO.MemoryStream(packet)))
+        {
+            reader.ReadByte();
+            var mode = (GameMode)reader.ReadByte();
+            var state = (GameState)reader.ReadByte();
+            var countdown = reader.ReadSingle();
+            var raceTime = reader.ReadSingle();
+            var battleRadius = reader.ReadSingle();
+            var knockout = reader.ReadByte();
+            var host = ReadCar(reader);
+            var me = ReadCar(reader);
+            var hostWins = reader.ReadByte();
+            var myWins = reader.ReadByte();
+            var hostPlace = reader.ReadByte();
+            var goFlash = reader.ReadSingle();
+            var coinBits = reader.ReadUInt16();
+            var myBoost = reader.ReadBoolean();
+
+            if (mode != _mode)
+            {
+                _mode = mode;
+                SetModeVisuals();
+                StartRound();
+                _snapNetworkCars = true;
+            }
+
+            var previousState = _state;
+            if (state == GameState.Countdown && previousState != GameState.Countdown)
+                _snapNetworkCars = true;
+
+            _state = state;
+            _countdown = countdown;
+            _raceTime = raceTime;
+            _battleRadius = battleRadius;
+            BattleArena.SetRadius(_battleRing, battleRadius);
+            _netMine = me;
+            _netOther = host;
+            _playerFall = me.Fall;
+            _playerLaps = me.Laps;
+            if (_rival != null)
+            {
+                _rival.Fall = host.Fall;
+                _rival.Laps = host.Laps;
+            }
+
+            _playerWins = myWins;
+            _rivalWins = hostWins;
+            _finishPlace = hostPlace == 1 ? 2 : 1;
+            _knockoutUntil = knockout == 0 ? 0f : Time.time + 0.5f;
+            _knockoutText = knockout == 2 ? "OUT!" : "KNOCKOUT!";
+            _goFlashUntil = Time.time + goFlash;
+            if (myBoost && Time.time >= _boostUntil) ShowHint("BOOST!");
+            _boostUntil = myBoost ? Time.time + 0.1f : 0f;
+            for (var i = 0; i < _coins.Count && i < 16; i++)
+                if (_coins[i] != null) _coins[i].gameObject.SetActive((coinBits & (1 << i)) != 0);
+
+            if (state != previousState)
+                _message = ClientMessageFor(state);
+        }
+    }
+
+    private string ClientMessageFor(GameState state)
+    {
+        switch (state)
+        {
+            case GameState.Ready:
+                return "Connected! Waiting for the host to start.";
+            case GameState.Countdown:
+                return _mode == GameMode.Battle
+                    ? "Round! YOU " + _playerWins + " : " + _rivalWins + " HOST"
+                    : "Get ready...";
+            case GameState.Racing:
+                return _mode == GameMode.Race
+                    ? LapCount + " laps! Drive through coins for a speed boost."
+                    : "Push the host out of the ring! The ring keeps shrinking.";
+            case GameState.Finished:
+                if (_mode == GameMode.Battle)
+                    return (_finishPlace == 1 ? "You win the battle " : "The host wins ")
+                        + _playerWins + " : " + _rivalWins + ". The host can start a rematch.";
+                return (_finishPlace == 1 ? "1st place! " : "2nd place. ") + "Time " + FormatTime(_raceTime)
+                    + "  The host can start a rematch.";
+            default:
+                return _message;
+        }
     }
 
     // ---------------------------------------------------------------- battle
@@ -749,7 +1041,8 @@ public sealed class ARDemoController : MonoBehaviour
         for (var i = 0; i < CoinCount; i++)
         {
             var lapFraction = (i + 0.5f) / CoinCount;
-            _coinLayout.Add(RaceTrack.Shared.PointAt(lapFraction, Random.Range(-0.07f, 0.07f)));
+            // Deterministic offsets so both phones in a two-player game see the same coins.
+            _coinLayout.Add(RaceTrack.Shared.PointAt(lapFraction, Mathf.Sin(i * 2.3f + 0.7f) * 0.07f));
         }
     }
 
@@ -791,8 +1084,11 @@ public sealed class ARDemoController : MonoBehaviour
         AdvanceLapCounter(_rival.Position, ref _rival.Laps, ref _rival.LastProgress);
         if (_rival.Laps < LapCount) return;
         _rival.Finished = true;
-        if (_state == GameState.Racing)
-            ShowHint("Your rival has finished. Bring it home!");
+        if (_state != GameState.Racing) return;
+
+        // Against a person the race ends at the first finish; against the bot you can still finish.
+        if (IsHostOnline) FinishRace();
+        else ShowHint("Your rival has finished. Bring it home!");
     }
 
     private int PlayerPosition()
@@ -821,7 +1117,11 @@ public sealed class ARDemoController : MonoBehaviour
             }
 
             if (_state == GameState.Racing && _knockoutUntil <= 0f)
-                BattleRivalInput(out drive, out steer);
+            {
+                if (IsHostOnline) ReadRemoteInput(out drive, out steer);
+                else BattleRivalInput(out drive, out steer);
+            }
+
             _rival.Steer = steer;
             StepCar(ref _rival.Position, ref _rival.Heading, ref _rival.Speed, drive, steer, 1f, dt, false);
             ApplyKnock(ref _rival.Position, ref _rival.Knock, dt);
@@ -829,7 +1129,11 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         var racing = _state == GameState.Racing || (_state == GameState.Finished && !_rival.Finished);
-        if (racing)
+        if (IsHostOnline)
+        {
+            if (_state == GameState.Racing) ReadRemoteInput(out drive, out steer);
+        }
+        else if (racing)
         {
             var track = RaceTrack.Shared;
             var lane = Mathf.Sin(_raceTime * 0.45f) * 0.045f;
@@ -844,7 +1148,8 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         _rival.Steer = steer;
-        StepCar(ref _rival.Position, ref _rival.Heading, ref _rival.Speed, drive, steer, 1f, dt, true);
+        var rivalBoost = Time.time < _rival.BoostUntil ? BoostMultiplier : 1f;
+        StepCar(ref _rival.Position, ref _rival.Heading, ref _rival.Speed, drive, steer, rivalBoost, dt, true);
     }
 
     /// <summary>Cars bump and push each other apart instead of driving through one another.</summary>
@@ -1113,18 +1418,19 @@ public sealed class ARDemoController : MonoBehaviour
 
     // ---------------------------------------------------------------- coins
 
-    private void AnimateAndCollectCoins()
+    /// <summary>
+    /// Spins the coins and, when this device runs the simulation, lets either car pick them up.
+    /// A network client only animates; the host tells it which coins are present.
+    /// </summary>
+    private void AnimateAndCollectCoins(bool simulate = true)
     {
-        var forward = HeadingToForward(_carHeading);
-        var right = HeadingToRight(_carHeading);
-
         for (var i = 0; i < _coins.Count; i++)
         {
             var coin = _coins[i];
             if (coin == null) continue;
             if (!coin.gameObject.activeSelf)
             {
-                if (Time.time >= _coinRespawnAt[i]) coin.gameObject.SetActive(true);
+                if (simulate && Time.time >= _coinRespawnAt[i]) coin.gameObject.SetActive(true);
                 continue;
             }
 
@@ -1133,25 +1439,41 @@ public sealed class ARDemoController : MonoBehaviour
             basePosition.y = 0.06f + Mathf.Sin(Time.time * 3f + i) * 0.01f;
             coin.localPosition = basePosition;
 
-            if (_state != GameState.Racing) continue;
+            if (!simulate || _state != GameState.Racing) continue;
 
-            // Collect when any part of the car body touches the coin, not just its centre.
-            var delta = new Vector2(basePosition.x, basePosition.z) - _carPosition;
-            var alongRight = Mathf.Clamp(Vector2.Dot(delta, right),
-                -ProceduralCarFactory.CarHalfWidth, ProceduralCarFactory.CarHalfWidth);
-            var alongForward = Mathf.Clamp(Vector2.Dot(delta, forward),
-                -ProceduralCarFactory.CarHalfLength, ProceduralCarFactory.CarHalfLength);
-            var closest = right * alongRight + forward * alongForward;
-            if ((delta - closest).magnitude > ProceduralCarFactory.CoinRadius + 0.02f)
-                continue;
+            var coinPoint = new Vector2(basePosition.x, basePosition.z);
+            var playerTouch = TouchesCoin(_carPosition, _carHeading, coinPoint);
+            var rivalTouch = _rival != null && TouchesCoin(_rival.Position, _rival.Heading, coinPoint);
+            if (!playerTouch && !rivalTouch) continue;
 
             // Coins are boost pads: they vanish for a few seconds and then come back.
             coin.gameObject.SetActive(false);
             _coinRespawnAt[i] = Time.time + CoinRespawnSeconds;
-            _score++;
-            _boostUntil = Time.time + BoostSeconds;
-            ShowHint("BOOST!");
+            if (playerTouch)
+            {
+                _score++;
+                _boostUntil = Time.time + BoostSeconds;
+                ShowHint("BOOST!");
+            }
+            else
+            {
+                _rival.BoostUntil = Time.time + BoostSeconds;
+            }
         }
+    }
+
+    // Collect when any part of the car body touches the coin, not just its centre.
+    private static bool TouchesCoin(Vector2 carPosition, float carHeading, Vector2 coinPoint)
+    {
+        var forward = HeadingToForward(carHeading);
+        var right = HeadingToRight(carHeading);
+        var delta = coinPoint - carPosition;
+        var alongRight = Mathf.Clamp(Vector2.Dot(delta, right),
+            -ProceduralCarFactory.CarHalfWidth, ProceduralCarFactory.CarHalfWidth);
+        var alongForward = Mathf.Clamp(Vector2.Dot(delta, forward),
+            -ProceduralCarFactory.CarHalfLength, ProceduralCarFactory.CarHalfLength);
+        var closest = right * alongRight + forward * alongForward;
+        return (delta - closest).magnitude <= ProceduralCarFactory.CoinRadius + 0.02f;
     }
 
     // ---------------------------------------------------------------- arena visuals
@@ -1221,9 +1543,7 @@ public sealed class ARDemoController : MonoBehaviour
             var point = ToGuiPoint(touch.position);
             if (touch.phase == TouchPhase.Began)
             {
-                if (_resetRect.Contains(point)) action = ControlAction.Reset;
-                else if (roundOver && Expand(_againRect).Contains(point)) action = ControlAction.Again;
-                else if (CanChangeMode() && _modeRect.Contains(point)) action = ControlAction.Mode;
+                action = ClassifyTap(point, roundOver, action);
             }
 
             if (!roundOver) ApplyHeldPoint(point);
@@ -1233,9 +1553,7 @@ public sealed class ARDemoController : MonoBehaviour
         var mousePoint = ToGuiPoint(Input.mousePosition);
         if (Input.GetMouseButtonDown(0))
         {
-            if (_resetRect.Contains(mousePoint)) action = ControlAction.Reset;
-            else if (roundOver && Expand(_againRect).Contains(mousePoint)) action = ControlAction.Again;
-            else if (CanChangeMode() && _modeRect.Contains(mousePoint)) action = ControlAction.Mode;
+            action = ClassifyTap(mousePoint, roundOver, action);
         }
 
         if (!roundOver)
@@ -1260,7 +1578,20 @@ public sealed class ARDemoController : MonoBehaviour
     }
 
     // The mode can be switched on the starting grid or after a finish, never mid-race.
-    private bool CanChangeMode() => _state == GameState.Ready || _state == GameState.Finished;
+    private bool CanChangeMode() => !IsClient && (_state == GameState.Ready || _state == GameState.Finished);
+
+    private bool ShowPlayersButton() => _net != null || CanChangeMode();
+
+    private ControlAction ClassifyTap(Vector2 point, bool roundOver, ControlAction current)
+    {
+        if (_resetRect.Contains(point)) return ControlAction.Reset;
+        if (_mpPanelOpen && Expand(_hostRect).Contains(point)) return ControlAction.Host;
+        if (_mpPanelOpen && Expand(_joinRect).Contains(point)) return ControlAction.Join;
+        if (ShowPlayersButton() && _mpRect.Contains(point)) return ControlAction.Players;
+        if (roundOver && !IsClient && Expand(_againRect).Contains(point)) return ControlAction.Again;
+        if (CanChangeMode() && _modeRect.Contains(point)) return ControlAction.Mode;
+        return current;
+    }
 
     private void ApplyHeldPoint(Vector2 guiPoint)
     {
@@ -1305,6 +1636,11 @@ public sealed class ARDemoController : MonoBehaviour
         _backRect = new Rect(_goRect.x - buttonWidth - gap, y, buttonWidth, buttonHeight);
         _resetRect = new Rect(_goRect.x, y - 42f * s - 10f * s, buttonWidth, 42f * s);
         _modeRect = new Rect(margin, y - 42f * s - 10f * s, buttonWidth * 2f + gap, 42f * s);
+        _mpRect = new Rect(Screen.width - margin - 150f * s, _hudRect.yMax + 8f * s, 150f * s, 40f * s);
+        var panelWidth = 150f * s;
+        var panelY = Screen.height * 0.45f;
+        _hostRect = new Rect(Screen.width * 0.5f - panelWidth - gap, panelY, panelWidth, 64f * s);
+        _joinRect = new Rect(Screen.width * 0.5f + gap, panelY, panelWidth, 64f * s);
 
         var noArWidth = 220f * s;
         var noArHeight = 54f * s;
@@ -1372,6 +1708,9 @@ public sealed class ARDemoController : MonoBehaviour
             featureStatus = "RESET starts a new layout";
         }
 
+        if (_net != null)
+            featureStatus = "2 players: " + _net.Status;
+
         GUI.Label(new Rect(textX, margin * 1.35f + 64f * scale, textWidth, 18f * scale), trackingStatus, _statusStyle);
         GUI.Label(new Rect(textX, margin * 1.35f + 82f * scale, textWidth, 18f * scale), featureStatus, _statusStyle);
 
@@ -1423,6 +1762,18 @@ public sealed class ARDemoController : MonoBehaviour
         {
             DrawControl(_modeRect, battle ? "MODE: BATTLE  ⇄" : "MODE: RACE  ⇄",
                 new Color(0.42f, 0.20f, 0.70f, 0.92f), false, _smallButtonStyle);
+        }
+
+        if (ShowPlayersButton())
+        {
+            var playersLabel = _net != null ? "LEAVE 2P" : _mpPanelOpen ? "CLOSE" : "2 PLAYERS";
+            DrawControl(_mpRect, playersLabel, new Color(0.10f, 0.45f, 0.85f, 0.92f), false, _smallButtonStyle);
+        }
+
+        if (_mpPanelOpen && _net == null)
+        {
+            DrawControl(_hostRect, "HOST", new Color(0.08f, 0.67f, 0.34f, 0.96f), false, _buttonStyle);
+            DrawControl(_joinRect, "JOIN", new Color(0.10f, 0.45f, 0.85f, 0.96f), false, _buttonStyle);
         }
 
         GUI.color = previousGuiColor;
