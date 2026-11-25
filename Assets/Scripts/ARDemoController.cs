@@ -20,7 +20,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private enum GameState { Placing, Ready, Countdown, Racing, Finished }
     // Values are sent over the network: keep Race = 0 and Battle = 1.
     private enum GameMode { Race, Battle, Free }
-    private enum UiScreen { Menu, Lobby, Settings, Game, Pause }
+    private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage }
 
     private static readonly List<ARRaycastHit> RaycastHits = new List<ARRaycastHit>();
     private const float FreeARHalfExtent = ARDepthObstacleDetector.HalfExtent - 0.15f;
@@ -91,6 +91,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private void Awake()
     {
         GameSettings.ApplyOrientation();
+        GameSettings.ApplyFrameRate();
         Input.compensateSensors = true;
         _ui = new UiKit();
         _logo = Resources.Load<Texture2D>("ARCoinDriveLogo");
@@ -111,7 +112,11 @@ public sealed partial class ARDemoController : MonoBehaviour
         // Match the virtual light to the real room on AR devices.
         if (_cameraManager != null && !_cameraManager.TryGetComponent<ARLightEstimation>(out _))
             _cameraManager.gameObject.AddComponent<ARLightEstimation>().Configure(_keyLight);
-        if (_arCamera != null) _arCamera.nearClipPlane = 0.03f;
+        if (_arCamera != null)
+        {
+            _arCamera.nearClipPlane = 0.03f;
+            _arCamera.cullingMask &= ~(1 << GaragePreview.Layer);
+        }
         _ = GameAudio.Instance;
         _screen = UiScreen.Menu;
     }
@@ -585,7 +590,8 @@ public sealed partial class ARDemoController : MonoBehaviour
             // Vertical FOV: wide enough in portrait, not fish-eyed in landscape.
             _arCamera.fieldOfView = Screen.width > Screen.height ? 58f : 80f;
             var eyeAnchor = _player.Rig != null ? _player.Rig.Body : car;
-            var eye = eyeAnchor.TransformPoint(new Vector3(0f, 0.108f, 0.09f));
+            var eyeLocal = _player.Spec.Body == CarBody.Buggy ? new Vector3(0f, 0.108f, 0.09f) : CarModelBuilder.DriverEye(_player.Spec.Body);
+            var eye = eyeAnchor.TransformPoint(eyeLocal);
             var look = eyeAnchor.rotation * Quaternion.Euler(5f, 0f, 0f);
             var eyeTransform = _arCamera.transform;
             eyeTransform.position = eye;
@@ -671,8 +677,8 @@ public sealed partial class ARDemoController : MonoBehaviour
         var cameraRight = _arena.InverseTransformDirection(_arCamera.transform.right);
         var angle = _buildKind == ObstacleKind.Wall ? Mathf.Atan2(-cameraRight.z, cameraRight.x) * Mathf.Rad2Deg : 0f;
         var footprint = ProceduralCarFactory.Footprint(_buildKind, point, angle);
-        if (CarCollision.Overlap(_player.Position, _player.Heading, ProceduralCarFactory.CarHalfWidth,
-                ProceduralCarFactory.CarHalfLength, footprint, out _, out _))
+        if (CarCollision.Overlap(_player.Position, _player.Heading, _player.Spec.HalfWidth,
+                _player.Spec.HalfLength, footprint, out _, out _))
         {
             ShowHint("The car is in the way");
             return;
@@ -706,10 +712,10 @@ public sealed partial class ARDemoController : MonoBehaviour
     /// (virtual room), and in AR the depth map and tracked vertical planes. The normal points
     /// away from what was hit.
     /// </summary>
-    private bool CollidesWithWorld(Vector2 position, float heading, Vector2 travel, out Vector2 normal, out float depth)
+    private bool CollidesWithWorld(Car car, Vector2 position, float heading, Vector2 travel, out Vector2 normal, out float depth)
     {
-        const float halfWidth = ProceduralCarFactory.CarHalfWidth;
-        const float halfLength = ProceduralCarFactory.CarHalfLength;
+        var halfWidth = car.Spec.HalfWidth;
+        var halfLength = car.Spec.HalfLength;
         var push = Vector2.zero;
         var deepest = 0f;
 
@@ -731,7 +737,7 @@ public sealed partial class ARDemoController : MonoBehaviour
                 Accumulate(_depthDetector.Overlap(position, heading, halfWidth, halfLength, out var n, out var d), n, d);
 
             if (travel.sqrMagnitude > 0.0000001f
-                && IsBlockedByDetectedVerticalSurface(new Vector3(position.x, 0f, position.y), new Vector3(travel.x, 0f, travel.y).normalized))
+                && IsBlockedByDetectedVerticalSurface(new Vector3(position.x, 0f, position.y), new Vector3(travel.x, 0f, travel.y).normalized, halfLength))
                 Accumulate(true, -travel.normalized, 0.01f);
         }
 
@@ -747,13 +753,13 @@ public sealed partial class ARDemoController : MonoBehaviour
         }
     }
 
-    private bool IsBlockedByDetectedVerticalSurface(Vector3 candidateCarPosition, Vector3 localTravelDirection)
+    private bool IsBlockedByDetectedVerticalSurface(Vector3 candidateCarPosition, Vector3 localTravelDirection, float halfLength)
     {
         if (_planeManager == null || _arena == null) return false;
 
         // Probe slightly ahead of the car at bumper height. AR planes are geometric
         // observations, so this only guards against flat surfaces the device has tracked.
-        var probeLocal = candidateCarPosition + localTravelDirection * (ProceduralCarFactory.CarHalfLength + 0.012f) + Vector3.up * 0.05f;
+        var probeLocal = candidateCarPosition + localTravelDirection * (halfLength + 0.012f) + Vector3.up * 0.05f;
         var probeWorld = _arena.TransformPoint(probeLocal);
 
         foreach (var plane in _planeManager.trackables)

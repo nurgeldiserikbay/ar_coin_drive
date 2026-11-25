@@ -21,7 +21,7 @@ public sealed class LanSession : IDisposable
 
     public const int GamePort = 47777;
     public const int MaxPlayers = 4;
-    private const byte Version = 2;
+    private const byte Version = 3;
     private const byte Probe = (byte)'P';
     private const byte Offer = (byte)'O';
     private const byte JoinRequest = (byte)'J';
@@ -39,6 +39,7 @@ public sealed class LanSession : IDisposable
         public int Slot;
         public string Name;
         public int Color;
+        public int CarType;
         public float LastHeard;
         public float Drive;
         public float Steer;
@@ -57,6 +58,7 @@ public sealed class LanSession : IDisposable
     private readonly byte[] _inputBuffer = new byte[10];
     private readonly string _name;
     private readonly int _color;
+    private readonly int _carType;
     private IPEndPoint _host;
     private float _lastHeard;
     private float _nextScan;
@@ -82,11 +84,12 @@ public sealed class LanSession : IDisposable
     public int Slot { get; private set; }
     public int PlayerCount => Role == SessionRole.Host ? Peers.Count + 1 : 0;
 
-    private LanSession(SessionRole role, string name, int color)
+    private LanSession(SessionRole role, string name, int color, int carType)
     {
         Role = role;
         _name = GameSettings.Clean(name);
         _color = color;
+        _carType = carType;
         var locals = FindLocalAddresses();
         LocalAddress = locals.Count > 0 ? locals[0].ToString() : "unknown";
         _socket = role == SessionRole.Host ? new UdpClient(GamePort) : new UdpClient(0);
@@ -94,8 +97,8 @@ public sealed class LanSession : IDisposable
         if (role == SessionRole.Client) BuildScanTargets();
     }
 
-    public static LanSession Host(string name, int color) => new LanSession(SessionRole.Host, name, color);
-    public static LanSession Browse(string name, int color) => new LanSession(SessionRole.Client, name, color);
+    public static LanSession Host(string name, int color, int carType = 0) => new LanSession(SessionRole.Host, name, color, carType);
+    public static LanSession Browse(string name, int color, int carType = 0) => new LanSession(SessionRole.Client, name, color, carType);
 
     /// <summary>Also probe a specific address (manual address entry, tests).</summary>
     public void AddProbeTarget(IPEndPoint target) => _scanTargets.Insert(0, target);
@@ -200,7 +203,7 @@ public sealed class LanSession : IDisposable
         }
 
         var peer = Peers.Find(p => p.EndPoint.Equals(from));
-        if (type == JoinRequest && data[1] == Version && data.Length >= 4)
+        if (type == JoinRequest && data[1] == Version && data.Length >= 5)
         {
             if (peer == null)
             {
@@ -210,13 +213,14 @@ public sealed class LanSession : IDisposable
                     return;
                 }
 
-                var nameLength = Mathf.Min(data[3], data.Length - 4);
+                var nameLength = Mathf.Min(data[4], data.Length - 5);
                 peer = new Peer
                 {
                     EndPoint = from,
                     Slot = FreeSlot(),
                     Color = data[2],
-                    Name = GameSettings.Clean(Encoding.UTF8.GetString(data, 4, nameLength))
+                    CarType = data[3],
+                    Name = GameSettings.Clean(Encoding.UTF8.GetString(data, 5, nameLength))
                 };
                 Peers.Add(peer);
                 Joined.Enqueue(peer.Slot);
@@ -326,12 +330,13 @@ public sealed class LanSession : IDisposable
     private byte[] JoinPacket()
     {
         var name = Encoding.UTF8.GetBytes(_name);
-        var packet = new byte[4 + name.Length];
+        var packet = new byte[5 + name.Length];
         packet[0] = JoinRequest;
         packet[1] = Version;
         packet[2] = (byte)_color;
-        packet[3] = (byte)name.Length;
-        Buffer.BlockCopy(name, 0, packet, 4, name.Length);
+        packet[3] = (byte)_carType;
+        packet[4] = (byte)name.Length;
+        Buffer.BlockCopy(name, 0, packet, 5, name.Length);
         return packet;
     }
 

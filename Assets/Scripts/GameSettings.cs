@@ -33,6 +33,15 @@ public static class GameSettings
     public static SteeringSetting Steering { get => (SteeringSetting)GetInt("Steering", 0); set => SetInt("Steering", (int)value); }
     public static int Bots { get => Mathf.Clamp(GetInt("Bots", 1), 0, 3); set => SetInt("Bots", Mathf.Clamp(value, 0, 3)); }
     public static int CarColor { get => Mathf.Clamp(GetInt("CarColor", 0), 0, CarColors.Length - 1); set => SetInt("CarColor", value); }
+    public static int CarType { get => Mathf.Clamp(GetInt("CarType", 0), 0, CarCatalog.All.Length - 1); set => SetInt("CarType", value); }
+    /// <summary>Battery saver caps the game at 30 FPS instead of 60.</summary>
+    public static bool BatterySaver { get => GetInt("BatterySaver", 0) == 1; set => SetInt("BatterySaver", value ? 1 : 0); }
+
+    public static void ApplyFrameRate()
+    {
+        QualitySettings.vSyncCount = 0;
+        Application.targetFrameRate = BatterySaver ? 30 : 60;
+    }
 
     public static string PlayerName
     {

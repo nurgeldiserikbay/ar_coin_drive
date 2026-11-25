@@ -27,6 +27,14 @@ public static class ProceduralCarFactory
             secondary ?? new Color(0.94f, 0.94f, 0.92f));
     }
 
+    /// <summary>Any car from the catalogue: the RC buggy or one of the road cars.</summary>
+    public static GameObject CreateCar(Transform parent, CarSpec spec, Color paint, Color trim)
+    {
+        return spec.Body == CarBody.Buggy
+            ? ProceduralCarModel.Create(parent, paint, trim)
+            : CarModelBuilder.Create(parent, spec, paint);
+    }
+
     /// <summary>Footprint of an obstacle placed at a floor point with a heading.</summary>
     public static WorldObstacle Footprint(ObstacleKind kind, Vector2 position, float angle)
     {

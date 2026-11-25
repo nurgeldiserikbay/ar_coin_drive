@@ -63,6 +63,29 @@ public static class ARCoinDriveSceneBuilder
         return prefab;
     }
 
+    /// <summary>
+    /// The car shader's material lives in Resources with GPU instancing on, so the build keeps
+    /// the instancing variants (the four wheels of a car draw in one call).
+    /// </summary>
+    private static void EnsureCarMaterial()
+    {
+        const string path = "Assets/Resources/ARCoinDriveCar.mat";
+        var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+        var shader = Shader.Find("AR Coin Drive/Car");
+        if (shader == null) return;
+        if (material == null)
+        {
+            material = new Material(shader) { name = "ARCoinDriveCar", enableInstancing = true };
+            AssetDatabase.CreateAsset(material, path);
+        }
+        else if (!material.enableInstancing || material.shader != shader)
+        {
+            material.shader = shader;
+            material.enableInstancing = true;
+            EditorUtility.SetDirty(material);
+        }
+    }
+
     [MenuItem("Tools/AR Coin Drive/Create Demo Scene")]
     public static void CreateDemoScene()
     {
@@ -79,6 +102,7 @@ public static class ARCoinDriveSceneBuilder
         PlayerSettings.allowedAutorotateToPortrait = true;
         PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
         ARCoinDriveBranding.Apply();
+        EnsureCarMaterial();
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 

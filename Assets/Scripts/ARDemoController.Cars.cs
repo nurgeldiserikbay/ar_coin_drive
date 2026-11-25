@@ -15,6 +15,9 @@ public sealed partial class ARDemoController
         public Transform Root;
         public ProceduralCarRig Rig;
         public GameAudio.EngineVoice Voice;
+        public CarSpec Spec;
+        public int SpecIndex;
+        public float Lateral;       // sideways slide speed (drift)
 
         public Vector2 Position;
         public float Heading;
@@ -157,7 +160,7 @@ public sealed partial class ARDemoController
     private void CreateCars()
     {
         var used = new HashSet<int>();
-        _player = AddCar(0, GameSettings.PlayerName, GameSettings.CarColor, true, false);
+        _player = AddCar(0, GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType, true, false);
         used.Add(_player.ColorIndex);
 
         if (IsHost)
@@ -166,7 +169,7 @@ public sealed partial class ARDemoController
             {
                 var color = used.Contains(peer.Color) ? FreeColor(used) : peer.Color;
                 used.Add(color);
-                AddCar(peer.Slot, peer.Name, color, false, false);
+                AddCar(peer.Slot, peer.Name, color, peer.CarType, false, false);
             }
         }
 
@@ -177,7 +180,9 @@ public sealed partial class ARDemoController
         {
             var color = FreeColor(used);
             used.Add(color);
-            AddCar(4 + i, "CPU " + (i + 1), color, false, true);
+            // Computer drivers get a mix of the other cars.
+            var spec = (GameSettings.CarType + 1 + i * 2) % CarCatalog.All.Length;
+            AddCar(4 + i, "CPU " + (i + 1), color, spec, false, true);
         }
     }
 
@@ -188,12 +193,13 @@ public sealed partial class ARDemoController
         return 0;
     }
 
-    private Car AddCar(int id, string name, int colorIndex, bool local, bool bot)
+    private Car AddCar(int id, string name, int colorIndex, int specIndex, bool local, bool bot)
     {
-        var car = new Car { Id = id, Name = name, ColorIndex = colorIndex, IsLocal = local, IsBot = bot };
-        car.Root = ProceduralCarFactory.CreateCar(_roundRoot, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex)).transform;
+        var spec = CarCatalog.Get(specIndex);
+        var car = new Car { Id = id, Name = name, ColorIndex = colorIndex, IsLocal = local, IsBot = bot, Spec = spec, SpecIndex = CarCatalog.IndexOf(spec.Id) };
+        car.Root = ProceduralCarFactory.CreateCar(_roundRoot, spec, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex)).transform;
         car.Rig = car.Root.GetComponent<ProceduralCarRig>();
-        if (car.Rig != null) car.Rig.ReferenceSpeed = MaxSpeed * SpeedScale;
+        if (car.Rig != null) car.Rig.ReferenceSpeed = spec.TopSpeed * SpeedScale;
         car.Voice = GameAudio.Instance.AttachEngine(car.Root, local);
         _cars.Add(car);
         return car;
@@ -362,7 +368,7 @@ public sealed partial class ARDemoController
         foreach (var car in _cars)
         {
             if (car.Rig != null) car.Rig.UpdateVisual(car.Speed, car.Steer, dt);
-            var ratio = car.Speed / (MaxSpeed * SpeedScale);
+            var ratio = car.Speed / (car.Spec.TopSpeed * SpeedScale);
             car.Voice?.Update(ratio, car.Drive, car.Steer, Mathf.Max(dt, 0.0001f), !paused && car.Fall <= 0f && _arena != null);
         }
     }
@@ -492,6 +498,7 @@ public sealed partial class ARDemoController
             car.Heading = Mathf.Atan2(-car.Position.x, -car.Position.y) * Mathf.Rad2Deg;
             car.Speed = 0f;
             car.Knock = Vector2.zero;
+            car.Lateral = 0f;
             car.Fall = 0f;
             car.Out = false;
             ApplyTransform(car);
@@ -630,9 +637,9 @@ public sealed partial class ARDemoController
         var position = start;
         var heading = startHeading;
         var boost = (Time.time < car.BoostUntil ? BoostMultiplier : 1f) * SpeedScale;
-        StepCar(ref position, ref heading, ref car.Speed, car.Drive, car.Steer, boost, dt, _mode == GameMode.Race);
+        StepCar(car, ref position, ref heading, boost, dt, _mode == GameMode.Race);
         if (_mode == GameMode.Battle)
-            ApplyKnock(ref position, ref car.Knock, dt);
+            ApplyKnock(car, ref position, dt);
 
         // Real and placed obstacles only exist around this phone, so they stop the local car.
         if (car.IsLocal)
@@ -645,9 +652,9 @@ public sealed partial class ARDemoController
     private void ResolveWorldCollision(Car car, Vector2 start, float startHeading, ref Vector2 position, ref float heading, float dt)
     {
         var travel = position - start;
-        if (!CollidesWithWorld(position, heading, travel, out var normal, out _)) return;
+        if (!CollidesWithWorld(car, position, heading, travel, out var normal, out _)) return;
 
-        if (CollidesWithWorld(start, startHeading, travel, out var startNormal, out var startDepth))
+        if (CollidesWithWorld(car, start, startHeading, travel, out var startNormal, out var startDepth))
         {
             // Already touching (a new obstacle appeared in the depth map, or one was placed):
             // let the car ease out instead of freezing it.
@@ -658,19 +665,21 @@ public sealed partial class ARDemoController
         // Slide along the surface: drop the part of the move that goes into it.
         var into = Vector2.Dot(travel, normal);
         var slide = start + (into < 0f ? travel - normal * into : travel);
-        if (!CollidesWithWorld(slide, heading, travel, out _, out _)) position = slide;
-        else if (!CollidesWithWorld(start, heading, travel, out _, out _)) position = start;
+        if (!CollidesWithWorld(car, slide, heading, travel, out _, out _)) position = slide;
+        else if (!CollidesWithWorld(car, start, heading, travel, out _, out _)) position = start;
         else
         {
             position = start;
             heading = startHeading;
         }
 
-        // Head-on hits bounce the car back and rock the shell; glancing hits scrape.
-        var approach = -Vector2.Dot(CarCollision.Forward(startHeading) * car.Speed, normal);
+        // Head-on hits bounce the car back and rock the body; glancing hits scrape.
+        var velocity = CarCollision.Forward(startHeading) * car.Speed + CarCollision.Right(startHeading) * car.Lateral;
+        var approach = -Vector2.Dot(velocity, normal);
+        car.Lateral *= 0.4f;
         if (approach > 0.3f)
         {
-            var strength = approach / (MaxSpeed * FreeSpeedMultiplier);
+            var strength = approach / Mathf.Max(0.1f, car.Spec.TopSpeed * FreeSpeedMultiplier);
             if (car.Rig != null) car.Rig.Bump(Mathf.Sign(car.Speed) * strength);
             car.Speed = -car.Speed * 0.25f;
             var crash = approach > 0.45f;
@@ -684,67 +693,98 @@ public sealed partial class ARDemoController
         }
     }
 
-    /// <summary>Shared RC-car physics.</summary>
-    private void StepCar(ref Vector2 position, ref float heading, ref float speed,
-        float drive, float steer, float speedMultiplier, float dt, bool onTrack)
+    /// <summary>
+    /// Car physics with the car's own stats: throttle and brakes along the car, steering that
+    /// grows with speed, and a sideways slide. When the car turns, its velocity is carried over
+    /// into the new direction, so part of it becomes sideways; grip then kills the slide. At
+    /// speed with the wheel turned, drift-happy cars lose rear grip and slide longer.
+    /// </summary>
+    private void StepCar(Car car, ref Vector2 position, ref float heading, float speedMultiplier, float dt, bool onTrack)
     {
-        // Leaving the asphalt onto the astroturf run-off costs speed.
+        var spec = car.Spec;
         var onRoad = !onTrack
             || Mathf.Abs(RaceTrack.Shared.LateralOffset(position)) <= RaceTrack.RoadHalfWidth + 0.016f;
-        var targetSpeed = drive * MaxSpeed * speedMultiplier * (onRoad ? 1f : 0.58f);
+        var topSpeed = spec.TopSpeed * speedMultiplier * (onRoad ? 1f : spec.OffRoad);
+        var targetSpeed = car.Drive * topSpeed;
         float rate;
         if (Mathf.Abs(targetSpeed) < 0.001f)
             rate = RollingFriction;
-        else if (Mathf.Abs(speed) > 0.01f && Mathf.Sign(targetSpeed) != Mathf.Sign(speed))
+        else if (Mathf.Abs(car.Speed) > 0.01f && Mathf.Sign(targetSpeed) != Mathf.Sign(car.Speed))
             rate = Braking;
         else
-            rate = Acceleration * Mathf.Max(1f, speedMultiplier * 0.8f);
-        speed = Mathf.MoveTowards(speed, targetSpeed, rate * dt);
+            rate = spec.Acceleration * Mathf.Max(1f, speedMultiplier * 0.8f);
+        car.Speed = Mathf.MoveTowards(car.Speed, targetSpeed, rate * dt);
 
-        if (Mathf.Abs(speed) < 0.0005f && Mathf.Abs(targetSpeed) < 0.001f)
+        if (Mathf.Abs(car.Speed) < 0.0005f && Mathf.Abs(targetSpeed) < 0.001f && Mathf.Abs(car.Lateral) < 0.0005f)
         {
-            speed = 0f;
+            car.Speed = 0f;
+            car.Lateral = 0f;
             return;
         }
 
-        // Steering authority grows with speed and flips when reversing, like a real car; at high
-        // speed the turn rate eases off so the car does not spin on the spot.
-        var steerAuthority = Mathf.Clamp01(Mathf.Abs(speed) / FullSteerSpeed) * Mathf.Sign(speed);
-        var highSpeedEase = Mathf.Lerp(1f, 0.72f, Mathf.Clamp01((Mathf.Abs(speed) - MaxSpeed) / MaxSpeed));
-        heading += steer * TurnSpeed * steerAuthority * highSpeedEase * dt;
-        position += CarCollision.Forward(heading) * (speed * dt);
-        if (onTrack && RaceTrack.Shared.ConstrainToRails(ref position, ProceduralCarFactory.CarHalfWidth))
+        // Steering: authority grows with speed, flips in reverse, eases off at very high speed.
+        var steerAuthority = Mathf.Clamp01(Mathf.Abs(car.Speed) / FullSteerSpeed) * Mathf.Sign(car.Speed);
+        var highSpeedEase = Mathf.Lerp(1f, 0.72f, Mathf.Clamp01((Mathf.Abs(car.Speed) - MaxSpeed) / MaxSpeed));
+        var turn = car.Steer * spec.TurnRate * steerAuthority * highSpeedEase * dt;
+
+        // Carry the velocity into the rotated frame: some forward speed becomes slide.
+        if (Mathf.Abs(turn) > 0.0001f)
         {
-            // Scrape along the barrier, but keep enough speed to steer back onto the road.
-            var scrapeSpeed = Mathf.Sign(speed) * Mathf.Min(Mathf.Abs(speed), MaxSpeed * 0.4f);
-            speed = Mathf.MoveTowards(speed, scrapeSpeed, 2.5f * dt);
+            var radians = turn * Mathf.Deg2Rad;
+            var cos = Mathf.Cos(radians);
+            var sin = Mathf.Sin(radians);
+            var speed = car.Speed;
+            var lateral = car.Lateral;
+            car.Speed = speed * cos + lateral * sin;
+            car.Lateral = lateral * cos - speed * sin;
+            heading += turn;
         }
 
-        var clamped = ClampInsideArena(position, heading);
+        var speedRatio = Mathf.Clamp01(Mathf.Abs(car.Speed) / Mathf.Max(0.01f, spec.TopSpeed));
+        var looseness = spec.Drift * Mathf.Clamp01((speedRatio - 0.55f) / 0.45f) * Mathf.Abs(car.Steer);
+        var grip = spec.Grip * (onRoad ? 1f : 0.7f) * (1f - 0.75f * looseness);
+        car.Lateral *= Mathf.Exp(-grip * dt);
+        // Sliding scrubs speed.
+        car.Speed -= Mathf.Sign(car.Speed) * Mathf.Min(Mathf.Abs(car.Speed), Mathf.Abs(car.Lateral) * 0.6f * dt);
+
+        position += (CarCollision.Forward(heading) * car.Speed + CarCollision.Right(heading) * car.Lateral) * dt;
+        if (onTrack && RaceTrack.Shared.ConstrainToRails(ref position, spec.HalfWidth))
+        {
+            // Scrape along the barrier, but keep enough speed to steer back onto the road.
+            var scrapeSpeed = Mathf.Sign(car.Speed) * Mathf.Min(Mathf.Abs(car.Speed), spec.TopSpeed * 0.4f);
+            car.Speed = Mathf.MoveTowards(car.Speed, scrapeSpeed, 2.5f * dt);
+            car.Lateral *= 0.5f;
+        }
+
+        var clamped = ClampInsideArena(car, position, heading);
         if ((clamped - position).sqrMagnitude > 0.0000001f && _mode == GameMode.Free)
-            speed *= Mathf.Exp(-8f * dt); // the edge of the mapped area / the room wall
+        {
+            car.Speed *= Mathf.Exp(-8f * dt); // the edge of the mapped area / the room wall
+            car.Lateral *= 0.5f;
+        }
+
         position = clamped;
     }
 
     /// <summary>Knock-back from hits slides a car and fades out quickly.</summary>
-    private void ApplyKnock(ref Vector2 position, ref Vector2 knock, float dt)
+    private void ApplyKnock(Car car, ref Vector2 position, float dt)
     {
-        position += knock * dt;
-        knock *= Mathf.Exp(-3.2f * dt);
-        position = ClampInsideArena(position, 0f);
+        position += car.Knock * dt;
+        car.Knock *= Mathf.Exp(-3.2f * dt);
+        position = ClampInsideArena(car, position, car.Heading);
     }
 
     /// <summary>Keeps the whole rotated car body inside the current bounds.</summary>
-    private Vector2 ClampInsideArena(Vector2 position, float heading)
+    private Vector2 ClampInsideArena(Car car, Vector2 position, float heading)
     {
         var forward = CarCollision.Forward(heading);
         var right = CarCollision.Right(heading);
-        var extentX = ProceduralCarFactory.CarHalfWidth * Mathf.Abs(right.x) + ProceduralCarFactory.CarHalfLength * Mathf.Abs(forward.x);
-        var extentZ = ProceduralCarFactory.CarHalfWidth * Mathf.Abs(right.y) + ProceduralCarFactory.CarHalfLength * Mathf.Abs(forward.y);
+        var spec = car.Spec;
+        var extentX = spec.HalfWidth * Mathf.Abs(right.x) + spec.HalfLength * Mathf.Abs(forward.x);
+        var extentZ = spec.HalfWidth * Mathf.Abs(right.y) + spec.HalfLength * Mathf.Abs(forward.y);
         const float inset = 0.012f;
-        var bounds = _bounds;
-        position.x = Mathf.Clamp(position.x, bounds.xMin + inset + extentX, bounds.xMax - inset - extentX);
-        position.y = Mathf.Clamp(position.y, bounds.yMin + inset + extentZ, bounds.yMax - inset - extentZ);
+        position.x = Mathf.Clamp(position.x, _bounds.xMin + inset + extentX, _bounds.xMax - inset - extentX);
+        position.y = Mathf.Clamp(position.y, _bounds.yMin + inset + extentZ, _bounds.yMax - inset - extentZ);
         return position;
     }
 
@@ -756,29 +796,35 @@ public sealed partial class ARDemoController
                 ResolveContact(_cars[i], _cars[j]);
     }
 
+    private static float ContactRadius(Car car) => (car.Spec.HalfWidth + car.Spec.HalfLength) * 0.45f;
+
     private void ResolveContact(Car a, Car b)
     {
         if (a.Fall > 0f || b.Fall > 0f) return;
         var delta = b.Position - a.Position;
         var distance = delta.magnitude;
-        if (distance >= CarContactDistance || distance < 0.0001f) return;
+        var contact = ContactRadius(a) + ContactRadius(b);
+        if (distance >= contact || distance < 0.0001f) return;
 
+        // Heavier cars get pushed less.
         var normal = delta / distance;
-        var push = (CarContactDistance - distance) * 0.5f;
-        a.Position -= normal * push;
-        b.Position += normal * push;
+        var overlap = contact - distance;
+        var aShare = b.Spec.Mass / (a.Spec.Mass + b.Spec.Mass);
+        a.Position -= normal * overlap * aShare;
+        b.Position += normal * overlap * (1f - aShare);
 
-        var aVelocity = CarCollision.Forward(a.Heading) * a.Speed + a.Knock;
-        var bVelocity = CarCollision.Forward(b.Heading) * b.Speed + b.Knock;
+        var aVelocity = CarCollision.Forward(a.Heading) * a.Speed + CarCollision.Right(a.Heading) * a.Lateral + a.Knock;
+        var bVelocity = CarCollision.Forward(b.Heading) * b.Speed + CarCollision.Right(b.Heading) * b.Lateral + b.Knock;
         var aAttack = Mathf.Max(0f, Vector2.Dot(aVelocity, normal));
         var bAttack = Mathf.Max(0f, Vector2.Dot(bVelocity, -normal));
 
         if (_mode == GameMode.Battle)
         {
-            // Ramming transfers momentum: the car that hits harder sends the other one flying.
+            // Ramming transfers momentum, scaled by weight: a heavy car hits harder and moves less.
             if (aAttack + bAttack < 0.02f) return;
-            b.Knock += normal * (aAttack * 1.45f + bAttack * 0.2f);
-            a.Knock -= normal * (bAttack * 1.45f + aAttack * 0.2f);
+            var ratio = a.Spec.Mass / b.Spec.Mass;
+            b.Knock += normal * (aAttack * 1.45f * ratio + bAttack * 0.2f);
+            a.Knock -= normal * (bAttack * 1.45f / ratio + aAttack * 0.2f);
             a.Speed *= 0.55f;
             b.Speed *= 0.55f;
             if (aAttack > 0.15f || bAttack > 0.15f) ContactFeedback(a, b, aAttack, bAttack);
@@ -787,8 +833,8 @@ public sealed partial class ARDemoController
 
         if (_mode == GameMode.Race)
         {
-            RaceTrack.Shared.ConstrainToRails(ref a.Position, ProceduralCarFactory.CarHalfWidth);
-            RaceTrack.Shared.ConstrainToRails(ref b.Position, ProceduralCarFactory.CarHalfWidth);
+            RaceTrack.Shared.ConstrainToRails(ref a.Position, a.Spec.HalfWidth);
+            RaceTrack.Shared.ConstrainToRails(ref b.Position, b.Spec.HalfWidth);
         }
 
         a.Speed *= 0.93f;
@@ -841,7 +887,7 @@ public sealed partial class ARDemoController
             var coinPoint = new Vector2(basePosition.x, basePosition.z);
             foreach (var car in _cars)
             {
-                if (car.Fall > 0f || !TouchesCoin(car.Position, car.Heading, coinPoint)) continue;
+                if (car.Fall > 0f || !TouchesCoin(car, coinPoint)) continue;
                 // Coins are boost pads: they vanish for a few seconds and then come back.
                 coin.gameObject.SetActive(false);
                 _coinRespawnAt[i] = Time.time + CoinRespawnSeconds;
@@ -859,13 +905,13 @@ public sealed partial class ARDemoController
     }
 
     // Collect when any part of the car body touches the coin, not just its centre.
-    private static bool TouchesCoin(Vector2 carPosition, float carHeading, Vector2 coinPoint)
+    private static bool TouchesCoin(Car car, Vector2 coinPoint)
     {
-        var forward = CarCollision.Forward(carHeading);
-        var right = CarCollision.Right(carHeading);
-        var delta = coinPoint - carPosition;
-        var alongRight = Mathf.Clamp(Vector2.Dot(delta, right), -ProceduralCarFactory.CarHalfWidth, ProceduralCarFactory.CarHalfWidth);
-        var alongForward = Mathf.Clamp(Vector2.Dot(delta, forward), -ProceduralCarFactory.CarHalfLength, ProceduralCarFactory.CarHalfLength);
+        var forward = CarCollision.Forward(car.Heading);
+        var right = CarCollision.Right(car.Heading);
+        var delta = coinPoint - car.Position;
+        var alongRight = Mathf.Clamp(Vector2.Dot(delta, right), -car.Spec.HalfWidth, car.Spec.HalfWidth);
+        var alongForward = Mathf.Clamp(Vector2.Dot(delta, forward), -car.Spec.HalfLength, car.Spec.HalfLength);
         var closest = right * alongRight + forward * alongForward;
         return (delta - closest).magnitude <= ProceduralCarFactory.CoinRadius + 0.02f;
     }

@@ -33,6 +33,7 @@ public sealed partial class ARDemoController
             case UiScreen.Menu: MenuScreen(); break;
             case UiScreen.Lobby: LobbyScreen(); break;
             case UiScreen.Settings: SettingsScreen(); break;
+            case UiScreen.Garage: GarageScreen(); break;
             case UiScreen.Pause:
                 GameHud(false);
                 PauseScreen();
@@ -91,11 +92,126 @@ public sealed partial class ARDemoController
         }
 
         y += rowHeight + U(10f);
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "SETTINGS", UiKit.Look.Normal, false, 16))
+        var pair = (column.width - U(10f)) * 0.5f;
+        if (_ui.Button(new Rect(column.x, y, pair, rowHeight), "GARAGE", UiKit.Look.Normal, false, 16))
+            OpenGarage(UiScreen.Menu);
+        if (_ui.Button(new Rect(column.x + pair + U(10f), y, pair, rowHeight), "SETTINGS", UiKit.Look.Normal, false, 16))
             OpenSettings(UiScreen.Menu);
         y += rowHeight + U(12f);
-        _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor] + " buggy",
-            12, TextAnchor.MiddleCenter, UiKit.TextDim);
+        _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor]
+            + " " + CarCatalog.Get(GameSettings.CarType).Name, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
+    }
+
+    // ------------------------------------------------------------------ garage
+
+    private GaragePreview _garage;
+    private UiScreen _garageReturn = UiScreen.Menu;
+    private float _garageDrag;
+    private Vector2 _garageLastTouch;
+    private bool _garageDragging;
+
+    private void OpenGarage(UiScreen returnTo)
+    {
+        _garageReturn = returnTo;
+        _screen = UiScreen.Garage;
+        if (_garage == null) _garage = new GaragePreview();
+    }
+
+    private void CloseGarage()
+    {
+        _garage?.Release();
+        _screen = _garageReturn;
+        GameSettings.Save();
+        // A new car takes effect at the next round when nobody is mid-race.
+        if (_arena != null && !IsClient && _player != null && _player.SpecIndex != GameSettings.CarType)
+            StartRound();
+    }
+
+    private void GarageScreen()
+    {
+        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
+        var area = SafeRect();
+        Rect preview;
+        Rect info;
+        if (Landscape)
+        {
+            preview = new Rect(area.x, area.y + U(40f), area.width * 0.58f, area.height - U(40f));
+            info = new Rect(preview.xMax + U(16f), area.y + U(40f), area.width - preview.width - U(16f), area.height - U(40f));
+        }
+        else
+        {
+            preview = new Rect(area.x, area.y + U(40f), area.width, area.height * 0.42f);
+            info = new Rect(area.x, preview.yMax + U(10f), area.width, area.yMax - preview.yMax - U(10f));
+        }
+
+        _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "GARAGE", 22, TextAnchor.MiddleLeft, Color.white, true);
+        if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "DONE", UiKit.Look.Primary)) CloseGarage();
+
+        var index = GameSettings.CarType;
+        var spec = CarCatalog.Get(index);
+
+        // Turntable render (input pass only: rendering belongs in Update, not OnGUI).
+        if (!_ui.Drawing && _garage != null)
+        {
+            var drag = 0f;
+            var count = _ui.FreeFingers(out var finger, out _);
+            if (count == 1 && preview.Contains(finger))
+            {
+                if (_garageDragging) drag = (finger.x - _garageLastTouch.x) * 0.4f;
+                _garageLastTouch = finger;
+                _garageDragging = true;
+            }
+            else _garageDragging = false;
+
+            _garageDrag = drag;
+            _garage.Show(index, GameSettings.CarColor, preview.size, Time.unscaledDeltaTime, drag);
+        }
+
+        if (_garage != null && _garage.Texture != null) _ui.Image(preview, _garage.Texture);
+
+        // Arrows to switch cars.
+        var arrow = U(54f);
+        if (_ui.Button(new Rect(preview.x, preview.center.y - arrow * 0.5f, arrow, arrow), "◄", UiKit.Look.Normal, false, 22))
+            GameSettings.CarType = (index + CarCatalog.All.Length - 1) % CarCatalog.All.Length;
+        if (_ui.Button(new Rect(preview.xMax - arrow, preview.center.y - arrow * 0.5f, arrow, arrow), "►", UiKit.Look.Normal, false, 22))
+            GameSettings.CarType = (index + 1) % CarCatalog.All.Length;
+        _ui.Text(new Rect(preview.x, preview.yMax - U(26f), preview.width, U(22f)), (index + 1) + " / " + CarCatalog.All.Length + "   •   drag to rotate",
+            11, TextAnchor.MiddleCenter, UiKit.TextDim);
+
+        _ui.Panel(info);
+        var inner = Inset(info, U(14f));
+        var y = inner.y;
+        _ui.Text(new Rect(inner.x, y, inner.width, U(30f)), spec.Name.ToUpperInvariant(), 22, TextAnchor.MiddleLeft, Color.white, true);
+        y += U(30f);
+        _ui.Text(new Rect(inner.x, y, inner.width, U(20f)), spec.Class, 13, TextAnchor.MiddleLeft, UiKit.AccentColor);
+        y += U(30f);
+        var barRow = Mathf.Min(U(28f), (inner.height - U(170f)) / 4f);
+        StatBar(inner.x, ref y, inner.width, barRow, "Speed", spec.SpeedRating);
+        StatBar(inner.x, ref y, inner.width, barRow, "Acceleration", spec.AccelRating);
+        StatBar(inner.x, ref y, inner.width, barRow, "Handling", spec.HandlingRating);
+        StatBar(inner.x, ref y, inner.width, barRow, "Weight", spec.WeightRating);
+        var trait = spec.Drift > 0.6f ? "Loves to drift." : spec.Mass > 1.3f ? "Heavy: hard to push out in battle." : spec.OffRoad > 0.85f ? "Keeps its speed off the road." : spec.Grip > 13f ? "Glued to the road." : "Balanced.";
+        _ui.Text(new Rect(inner.x, y, inner.width, U(20f)), trait, 12, TextAnchor.MiddleLeft, UiKit.TextDim);
+        y += U(28f);
+
+        var swatch = Mathf.Min(U(34f), (inner.width - U(6f) * GameSettings.CarColors.Length) / GameSettings.CarColors.Length);
+        for (var i = 0; i < GameSettings.CarColors.Length; i++)
+        {
+            var rect = new Rect(inner.x + i * (swatch + U(6f)), y, swatch, swatch);
+            if (_ui.Swatch(rect, GameSettings.CarColors[i], GameSettings.CarColor == i)) GameSettings.CarColor = i;
+        }
+    }
+
+    private void StatBar(float x, ref float y, float width, float row, string label, int rating)
+    {
+        _ui.Text(new Rect(x, y, U(100f), row), label, 13, TextAnchor.MiddleLeft, Color.white);
+        var barX = x + U(104f);
+        var barWidth = width - U(104f);
+        var segment = barWidth / 10f;
+        for (var i = 0; i < 10; i++)
+            _ui.Fill(new Rect(barX + i * segment, y + row * 0.3f, segment - U(3f), row * 0.4f),
+                i < rating ? UiKit.AccentColor : new Color(1f, 1f, 1f, 0.12f));
+        y += row + U(4f);
     }
 
     private static Rect Inset(Rect r, float by) => new Rect(r.x + by, r.y + by, r.width - by * 2f, r.height - by * 2f);
@@ -207,7 +323,7 @@ public sealed partial class ARDemoController
         _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.02f, 0.04f, 0.07f, 0.9f));
         var area = SafeRect();
         var columns = Landscape ? 2 : 1;
-        var rows = columns == 2 ? 6 : 11;
+        var rows = columns == 2 ? 6 : 12;
         // Panel fits its rows; rows shrink only when the screen is too short.
         var row = Mathf.Min(U(44f), (area.height - U(72f)) / rows - U(6f));
         var panel = CenterPanel(area, Landscape ? U(820f) : U(520f), Mathf.Min(area.height, U(72f) + rows * (row + U(6f))));
@@ -266,6 +382,12 @@ public sealed partial class ARDemoController
         y += row + U(6f);
         var debug = SegmentRow(x, ref y, columnWidth, row, "AR details", new[] { "HIDE", "SHOW" }, GameSettings.ShowDebug ? 1 : 0);
         GameSettings.ShowDebug = debug == 1;
+        var saver = SegmentRow(x, ref y, columnWidth, row, "Frame rate", new[] { "60 FPS", "BATTERY 30" }, GameSettings.BatterySaver ? 1 : 0);
+        if ((saver == 1) != GameSettings.BatterySaver)
+        {
+            GameSettings.BatterySaver = saver == 1;
+            GameSettings.ApplyFrameRate();
+        }
     }
 
     private float SliderRow(float x, ref float y, float width, float row, string label, float value)
@@ -406,7 +528,9 @@ public sealed partial class ARDemoController
         }
 
         y += row + U(8f);
-        if (_ui.Button(new Rect(x, y, columnWidth, row), "SETTINGS")) OpenSettings(UiScreen.Pause);
+        var halfWidth = (columnWidth - U(8f)) * 0.5f;
+        if (_ui.Button(new Rect(x, y, halfWidth, row), "GARAGE")) OpenGarage(UiScreen.Pause);
+        if (_ui.Button(new Rect(x + halfWidth + U(8f), y, halfWidth, row), "SETTINGS")) OpenSettings(UiScreen.Pause);
         y += row + U(8f);
         if (_ui.Button(new Rect(x, y, columnWidth, row), "MAIN MENU", UiKit.Look.Ghost)) ReturnToMenu();
     }
