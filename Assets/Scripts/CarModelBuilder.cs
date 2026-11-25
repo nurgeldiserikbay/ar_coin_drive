@@ -28,8 +28,8 @@ public static class CarModelBuilder
         public bool Knobby;
     }
 
-    private static readonly Dictionary<CarBody, Mesh> BodyMeshes = new Dictionary<CarBody, Mesh>();
-    private static readonly Dictionary<CarBody, Mesh> WheelMeshes = new Dictionary<CarBody, Mesh>();
+    private static readonly Dictionary<(CarBody, float), Mesh> BodyMeshes = new Dictionary<(CarBody, float), Mesh>();
+    private static readonly Dictionary<(CarBody, float), Mesh> WheelMeshes = new Dictionary<(CarBody, float), Mesh>();
     private static readonly Dictionary<CarBody, Shape> Shapes = new Dictionary<CarBody, Shape>();
     private static readonly Dictionary<Color, Material> Paints = new Dictionary<Color, Material>();
     private static Material _template;
@@ -83,6 +83,45 @@ public static class CarModelBuilder
         root.AddComponent<ProceduralCarRig>().Configure(body.transform, pivots.ToArray(), spinners.ToArray(), shape.WheelRadius * s);
         return root;
     }
+
+    /// <summary>
+    /// A parked full-size car (scenery): body and wheels at the given scale, no rig or sound.
+    /// Returns the wheel contact points (floor x, z) so they can be made solid.
+    /// </summary>
+    public static Vector2[] CreateParked(Transform parent, CarBody body, Color paint, Vector2 position, float heading, float scale)
+    {
+        var shape = GetShape(body);
+        var root = new GameObject(body + " (parked)").transform;
+        root.SetParent(parent, false);
+        root.localPosition = new Vector3(position.x, 0f, position.y);
+        root.localRotation = Quaternion.Euler(0f, heading, 0f);
+        var material = PaintMaterial(paint);
+        var bodyObject = new GameObject("Body");
+        bodyObject.transform.SetParent(root, false);
+        bodyObject.AddComponent<MeshFilter>().sharedMesh = GetBodyMesh(body, scale);
+        bodyObject.AddComponent<MeshRenderer>().sharedMaterial = material;
+        var contacts = new Vector2[4];
+        var k = 0;
+        foreach (var z in new[] { shape.FrontAxle, shape.RearAxle })
+        {
+            foreach (var side in new[] { -1f, 1f })
+            {
+                var wheel = new GameObject("Wheel");
+                wheel.transform.SetParent(root, false);
+                wheel.transform.localPosition = new Vector3(side * shape.Track, shape.WheelRadius, z) * scale;
+                if (side < 0f) wheel.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                wheel.AddComponent<MeshFilter>().sharedMesh = GetWheelMesh(body, scale);
+                wheel.AddComponent<MeshRenderer>().sharedMaterial = material;
+                var world = root.TransformPoint(new Vector3(side * shape.Track, 0f, z) * scale) - parent.position;
+                contacts[k++] = new Vector2(world.x, world.z);
+            }
+        }
+
+        return contacts;
+    }
+
+    public static float WheelRadiusAt(CarBody body, float scale) => GetShape(body).WheelRadius * scale;
+    public static float TyreWidthAt(CarBody body, float scale) => GetShape(body).TyreWidth * scale;
 
     /// <summary>Driver camera position in the body's space (just above the windscreen base).</summary>
     public static Vector3 DriverEye(CarBody body)
@@ -221,9 +260,9 @@ public static class CarModelBuilder
 
     // ------------------------------------------------------------------ body mesh
 
-    private static Mesh GetBodyMesh(CarBody body)
+    private static Mesh GetBodyMesh(CarBody body, float scale = CarCatalog.Scale)
     {
-        if (BodyMeshes.TryGetValue(body, out var mesh)) return mesh;
+        if (BodyMeshes.TryGetValue((body, scale), out var mesh)) return mesh;
         var shape = GetShape(body);
         var b = new PartMeshBuilder();
 
@@ -252,8 +291,8 @@ public static class CarModelBuilder
         AddCommonDetails(b, shape);
         AddCharacter(b, body, shape);
 
-        mesh = b.Build(body + " Body", CarCatalog.Scale);
-        BodyMeshes[body] = mesh;
+        mesh = b.Build(body + " Body", scale);
+        BodyMeshes[(body, scale)] = mesh;
         return mesh;
     }
 
@@ -413,9 +452,9 @@ public static class CarModelBuilder
 
     // ------------------------------------------------------------------ wheels
 
-    private static Mesh GetWheelMesh(CarBody body)
+    private static Mesh GetWheelMesh(CarBody body, float scale = CarCatalog.Scale)
     {
-        if (WheelMeshes.TryGetValue(body, out var mesh)) return mesh;
+        if (WheelMeshes.TryGetValue((body, scale), out var mesh)) return mesh;
         var shape = GetShape(body);
         var b = new PartMeshBuilder();
         var r = shape.WheelRadius;
@@ -446,8 +485,8 @@ public static class CarModelBuilder
 
         b.Lathe(new[] { new Vector2(half - 0.05f, 0.001f), new Vector2(half - 0.05f, rimRadius * 0.22f), new Vector2(half - 0.01f, rimRadius * 0.2f), new Vector2(half - 0.005f, 0.001f) }, 16, Matrix4x4.identity);
 
-        mesh = b.Build(body + " Wheel", CarCatalog.Scale);
-        WheelMeshes[body] = mesh;
+        mesh = b.Build(body + " Wheel", scale);
+        WheelMeshes[(body, scale)] = mesh;
         return mesh;
     }
 

@@ -68,17 +68,19 @@ public sealed partial class ARDemoController
 
     // Push-out battle: last car in the shrinking ring scores; first to three wins.
     private const int BattleWinsNeeded = 3;
-    private const float BattleStartRadius = 0.62f;
-    private const float BattleEndRadius = 0.30f;
+    private ArenaShape _arenaShape;
+    private int _arenaSize = 1;
+    private float BattleStartRadius => BattleArena.SizeRadius[_arenaSize];
+    private float BattleEndRadius => BattleStartRadius * 0.48f;
     private const float BattleShrinkSeconds = 40f;
-    private const float BattleStartOffset = 0.36f;
+    private float BattleStartOffset => BattleStartRadius * 0.58f;
 
     private readonly List<Car> _cars = new List<Car>();
     private Car _player;
     private readonly List<Transform> _coins = new List<Transform>();
     private readonly List<float> _coinRespawnAt = new List<float>();
     private readonly List<Vector2> _coinLayout = new List<Vector2>();
-    private float _battleRadius = BattleStartRadius;
+    private float _battleRadius = 0.62f;
     private float _knockoutUntil;
     private string _knockoutText;
     private float _firstFinishTime = -1f;
@@ -214,8 +216,13 @@ public sealed partial class ARDemoController
     /// <summary>Where the car may drive: the room in VR, the depth map area in AR free drive, else the arena.</summary>
     private void UpdateBounds()
     {
-        if (_mode != GameMode.Free)
-            _bounds = Rect.MinMaxRect(-HalfArena, -HalfArena, HalfArena, HalfArena);
+        if (_mode == GameMode.Race)
+            _bounds = RaceTrack.Shared.Bounds;
+        else if (_mode == GameMode.Battle)
+        {
+            var edge = BattleStartRadius * 1.3f;
+            _bounds = Rect.MinMaxRect(-edge, -edge, edge, edge);
+        }
         else if (_room != null)
             _bounds = _room.Bounds;
         else
@@ -235,12 +242,22 @@ public sealed partial class ARDemoController
         }
 
         var random = new System.Random();
-        var spread = _virtualMode ? 1.75f : 1.3f;
-        for (var attempt = 0; attempt < 200 && _coins.Count < FreeCoinCount; attempt++)
+        // In the house coins are spread through every room; in AR around the tapped spot.
+        var count = _room != null ? 18 : FreeCoinCount;
+        for (var attempt = 0; attempt < 400 && _coins.Count < count; attempt++)
         {
-            var angle = (float)random.NextDouble() * Mathf.PI * 2f;
-            var distance = Mathf.Sqrt((float)random.NextDouble()) * spread;
-            var point = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * distance;
+            Vector2 point;
+            if (_room != null)
+            {
+                point = new Vector2(Mathf.Lerp(_room.Bounds.xMin, _room.Bounds.xMax, (float)random.NextDouble()),
+                    Mathf.Lerp(_room.Bounds.yMin, _room.Bounds.yMax, (float)random.NextDouble()));
+            }
+            else
+            {
+                var angle = (float)random.NextDouble() * Mathf.PI * 2f;
+                point = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * (Mathf.Sqrt((float)random.NextDouble()) * 1.3f);
+            }
+
             if (IsGoodCoinSpot(point)) AddCoin(point);
         }
     }
@@ -533,12 +550,12 @@ public sealed partial class ARDemoController
         // After the main shrink the ring keeps closing, so a crowded centre always ends the round.
         _battleRadius = _raceTime <= BattleShrinkSeconds
             ? Mathf.Lerp(BattleStartRadius, BattleEndRadius, _raceTime / BattleShrinkSeconds)
-            : Mathf.Lerp(BattleEndRadius, 0.06f, (_raceTime - BattleShrinkSeconds) / 20f);
+            : Mathf.Lerp(BattleEndRadius, BattleStartRadius * 0.1f, (_raceTime - BattleShrinkSeconds) / 20f);
         BattleArena.SetRadius(_battleRing, _battleRadius);
 
         foreach (var car in _cars)
         {
-            if (car.Out || car.Position.magnitude <= _battleRadius + 0.015f) continue;
+            if (car.Out || BattleArena.Norm(car.Position, _arenaShape) <= _battleRadius + 0.015f) continue;
             car.Out = true;
             car.Fall = 0.0001f;
             GameAudio.Instance.Play(GameAudio.Sfx.Knockout, car.IsLocal ? 1f : 0.6f);
@@ -596,7 +613,7 @@ public sealed partial class ARDemoController
             }
 
             var aim = Vector2.zero;
-            if (car.Position.magnitude < _battleRadius - 0.11f && target != null)
+            if (BattleArena.Norm(car.Position, _arenaShape) < _battleRadius - 0.11f && target != null)
                 aim = target.Position + (target.Position.sqrMagnitude > 0.0001f ? target.Position.normalized * 0.08f : Vector2.zero);
             var toAim = aim - car.Position;
             var error = Mathf.DeltaAngle(car.Heading, Mathf.Atan2(toAim.x, toAim.y) * Mathf.Rad2Deg);
@@ -703,7 +720,7 @@ public sealed partial class ARDemoController
     {
         var spec = car.Spec;
         var onRoad = !onTrack
-            || Mathf.Abs(RaceTrack.Shared.LateralOffset(position)) <= RaceTrack.RoadHalfWidth + 0.016f;
+            || Mathf.Abs(RaceTrack.Shared.LateralOffset(position)) <= RaceTrack.Shared.RoadHalfWidth + 0.016f;
         var topSpeed = spec.TopSpeed * speedMultiplier * (onRoad ? 1f : spec.OffRoad);
         var targetSpeed = car.Drive * topSpeed;
         float rate;

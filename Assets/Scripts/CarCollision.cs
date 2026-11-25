@@ -53,6 +53,15 @@ public static class CarCollision
     public static bool Overlap(Vector2 carCenter, float carHeading, float halfWidth, float halfLength,
         in WorldObstacle obstacle, out Vector2 normal, out float depth)
     {
+        // Cheap reject with bounding circles: most of the house is nowhere near the car.
+        var reach = halfWidth + halfLength + (obstacle.IsCircle ? obstacle.Radius : obstacle.HalfSize.x + obstacle.HalfSize.y);
+        if ((obstacle.Center - carCenter).sqrMagnitude > reach * reach)
+        {
+            normal = Vector2.zero;
+            depth = 0f;
+            return false;
+        }
+
         var forward = Forward(carHeading);
         var right = Right(carHeading);
         return obstacle.IsCircle

@@ -34,6 +34,7 @@ public sealed partial class ARDemoController
             case UiScreen.Lobby: LobbyScreen(); break;
             case UiScreen.Settings: SettingsScreen(); break;
             case UiScreen.Garage: GarageScreen(); break;
+            case UiScreen.Tracks: TracksScreen(); break;
             case UiScreen.Pause:
                 GameHud(false);
                 PauseScreen();
@@ -200,6 +201,85 @@ public sealed partial class ARDemoController
             var rect = new Rect(inner.x + i * (swatch + U(6f)), y, swatch, swatch);
             if (_ui.Swatch(rect, GameSettings.CarColors[i], GameSettings.CarColor == i)) GameSettings.CarColor = i;
         }
+    }
+
+    // ------------------------------------------------------------------ tracks and arenas
+
+    private void TracksScreen()
+    {
+        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 0.96f));
+        var area = SafeRect();
+        _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "TRACKS & ARENAS", 22, TextAnchor.MiddleLeft, Color.white, true);
+        if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "DONE", UiKit.Look.Primary))
+        {
+            GameSettings.Save();
+            _screen = UiScreen.Pause;
+            var track = RaceTrack.Shared;
+            if (track.Layout != GameSettings.Track || track.Size != GameSettings.TrackSize
+                || _arenaShape != GameSettings.Arena || _arenaSize != GameSettings.ArenaSize)
+            {
+                ApplyTrackChoice();
+                StartRound();
+            }
+        }
+
+        Rect list;
+        Rect map;
+        if (Landscape)
+        {
+            list = new Rect(area.x, area.y + U(44f), area.width * 0.38f, area.height - U(44f));
+            map = new Rect(list.xMax + U(16f), list.y, area.width - list.width - U(16f), list.height);
+        }
+        else
+        {
+            map = new Rect(area.x, area.y + U(44f), area.width, area.height * 0.42f);
+            list = new Rect(area.x, map.yMax + U(10f), area.width, area.yMax - map.yMax - U(10f));
+        }
+
+        // Layout list, then size and arena choices underneath.
+        var y = list.y;
+        var row = Mathf.Min(U(42f), (list.height - U(150f)) / RaceTrack.LayoutNames.Length - U(6f));
+        for (var i = 0; i < RaceTrack.LayoutNames.Length; i++)
+        {
+            var preview = RaceTrack.Get((TrackLayout)i, GameSettings.TrackSize);
+            var label = RaceTrack.LayoutNames[i] + "   " + Mathf.RoundToInt(preview.Length) + " m lap";
+            if (_ui.Button(new Rect(list.x, y, list.width, row), label, UiKit.Look.Normal, (int)GameSettings.Track == i, 14))
+                GameSettings.Track = (TrackLayout)i;
+            y += row + U(6f);
+        }
+
+        y += U(6f);
+        _ui.Text(new Rect(list.x, y, U(90f), U(36f)), "Track size", 13, TextAnchor.MiddleLeft, Color.white);
+        GameSettings.TrackSize = (TrackSize)_ui.Segmented(new Rect(list.x + U(96f), y, list.width - U(96f), U(36f)),
+            new[] { "S 1.5 m", "M 2.4 m", "L 3.2 m" }, (int)GameSettings.TrackSize, 12);
+        y += U(42f);
+        if (GameSettings.TrackSize < RaceTrack.MinSize(GameSettings.Track))
+        {
+            _ui.Text(new Rect(list.x, y - U(6f), list.width, U(16f)), RaceTrack.LayoutNames[(int)GameSettings.Track] + " needs at least size M: M will be used.", 11, TextAnchor.MiddleLeft, UiKit.AccentColor);
+            y += U(14f);
+        }
+        _ui.Text(new Rect(list.x, y, U(90f), U(36f)), "Battle", 13, TextAnchor.MiddleLeft, Color.white);
+        var half = (list.width - U(96f) - U(8f)) * 0.5f;
+        GameSettings.Arena = (ArenaShape)_ui.Segmented(new Rect(list.x + U(96f), y, half, U(36f)), new[] { "RING", "SQUARE" }, (int)GameSettings.Arena, 12);
+        GameSettings.ArenaSize = _ui.Segmented(new Rect(list.x + U(96f) + half + U(8f), y, half, U(36f)), BattleArena.SizeNames, GameSettings.ArenaSize, 12);
+
+        // Mini map of the chosen layout: dots along the centre line.
+        _ui.Panel(map, new Color(0.08f, 0.10f, 0.13f, 0.9f));
+        var chosen = RaceTrack.Get(GameSettings.Track, GameSettings.TrackSize);
+        var line = chosen.CenterLine;
+        var extent = RaceTrack.SizeHalfExtent[(int)GameSettings.TrackSize];
+        var box = Mathf.Min(map.width, map.height) - U(40f);
+        var origin = map.center;
+        var step = Mathf.Max(1, line.Count / 90);
+        var dot = U(5f);
+        for (var i = 0; i < line.Count; i += step)
+        {
+            var p = line[i] / extent * box * 0.5f;
+            _ui.Fill(new Rect(origin.x + p.x - dot * 0.5f, origin.y - p.y - dot * 0.5f, dot, dot), i == 0 ? Color.white : UiKit.AccentColor);
+        }
+
+        _ui.Text(new Rect(map.x, map.yMax - U(26f), map.width, U(22f)),
+            "Needs about " + (extent * 2f).ToString("0.0") + " x " + (extent * 2f).ToString("0.0") + " m of floor", 12, TextAnchor.MiddleCenter, UiKit.TextDim);
     }
 
     private void StatBar(float x, ref float y, float width, float row, string label, int rating)
@@ -482,11 +562,15 @@ public sealed partial class ARDemoController
                 y += row + U(8f);
             }
 
-            if (_ui.Button(new Rect(x, y, columnWidth, row), "RESTART ROUND"))
+            var pairWidth = (columnWidth - U(8f)) * 0.5f;
+            if (_ui.Button(new Rect(x, y, pairWidth, row), "RESTART"))
             {
                 ClosePause();
                 StartRound();
             }
+
+            if (_ui.Button(new Rect(x + pairWidth + U(8f), y, pairWidth, row), "TRACKS", UiKit.Look.Accent))
+                _screen = UiScreen.Tracks;
 
             y += row + U(8f);
         }

@@ -1,12 +1,18 @@
 using UnityEngine;
 
+public enum ArenaShape { Circle, Square }
+
 /// <summary>
-/// A round toy sumo ring for the push-out battle. The mesh is built at radius 1 and the
-/// transform is scaled to the current radius, so the ring can shrink during a round.
+/// The push-out battle platform: a round ring or a rounded square, in three sizes. The mesh is
+/// built at unit size and the transform is scaled to the current size, so it can shrink during
+/// a round. Both shapes are superellipses, so "is this car out?" is one cheap norm.
 /// </summary>
 public static class BattleArena
 {
-    private const int Segments = 96;
+    public static readonly float[] SizeRadius = { 0.62f, 1.0f, 1.45f };
+    public static readonly string[] SizeNames = { "S", "M", "L" };
+    private const int Segments = 128;
+    private const float SquareExponent = 8f;
 
     private const int Clay = 0;
     private const int Line = 1;
@@ -14,13 +20,13 @@ public static class BattleArena
     private const int RimWhite = 3;
     private const int Side = 4;
 
-    private static Mesh _mesh;
+    private static readonly Mesh[] Meshes = new Mesh[2];
 
-    public static Transform Create(Transform parent)
+    public static Transform Create(Transform parent, ArenaShape shape)
     {
-        var ring = new GameObject("Battle Ring");
+        var ring = new GameObject("Battle Arena");
         ring.transform.SetParent(parent, false);
-        ring.AddComponent<MeshFilter>().sharedMesh = GetMesh();
+        ring.AddComponent<MeshFilter>().sharedMesh = GetMesh(shape);
         var ringRenderer = ring.AddComponent<MeshRenderer>();
         ringRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         ringRenderer.sharedMaterials = new[]
@@ -40,46 +46,57 @@ public static class BattleArena
             ring.localScale = new Vector3(radius, 1f, radius);
     }
 
-    private static Mesh GetMesh()
+    /// <summary>Distance-like measure that equals the radius on the arena edge.</summary>
+    public static float Norm(Vector2 position, ArenaShape shape)
     {
-        if (_mesh != null) return _mesh;
+        if (shape == ArenaShape.Circle) return position.magnitude;
+        var x = Mathf.Abs(position.x);
+        var z = Mathf.Abs(position.y);
+        return Mathf.Pow(Mathf.Pow(x, SquareExponent) + Mathf.Pow(z, SquareExponent), 1f / SquareExponent);
+    }
+
+    private static Mesh GetMesh(ArenaShape shape)
+    {
+        var index = (int)shape;
+        if (Meshes[index] != null) return Meshes[index];
 
         const float top = 0.004f;
         var builder = new RaceTrack.FlatMeshBuilder(5, 3f);
         for (var i = 0; i < Segments; i++)
         {
-            builder.AddTriangle(Clay, new Vector3(0f, top, 0f), Rim(i, 0.955f, top), Rim(i + 1, 0.955f, top), Vector3.up);
-            AddBand(builder, i % 4 < 2 ? RimRed : RimWhite, i, 0.955f, 1f, top + 0.0012f);
-            AddBand(builder, Line, i, 0.235f, 0.25f, top + 0.0008f);
+            builder.AddTriangle(Clay, new Vector3(0f, top, 0f), Rim(shape, i, 0.96f, top), Rim(shape, i + 1, 0.96f, top), Vector3.up);
+            AddBand(builder, shape, i % 6 < 3 ? RimRed : RimWhite, i, 0.96f, 1f, top + 0.0012f);
+            AddBand(builder, shape, Line, i, 0.235f, 0.25f, top + 0.0008f);
 
-            // A low skirt so the ring reads as a raised platform on the floor.
-            var a = Rim(i, 1f, top + 0.0012f);
-            var b = Rim(i + 1, 1f, top + 0.0012f);
-            var outward = Rim(i, 1f, 0f);
-            builder.AddQuad(Side, Rim(i, 1f, -0.002f), Rim(i + 1, 1f, -0.002f), b, a,
-                new Vector3(outward.x, 0f, outward.z));
+            // A low skirt so the arena reads as a raised platform on the floor.
+            var a = Rim(shape, i, 1f, top + 0.0012f);
+            var b = Rim(shape, i + 1, 1f, top + 0.0012f);
+            var outward = Rim(shape, i, 1f, 0f);
+            builder.AddQuad(Side, Rim(shape, i, 1f, -0.002f), Rim(shape, i + 1, 1f, -0.002f), b, a, new Vector3(outward.x, 0f, outward.z));
         }
 
-        // Starting lines where each car lines up.
-        foreach (var z in new[] { -0.47f, 0.47f })
-        {
-            builder.AddQuad(Line, new Vector3(-0.16f, top + 0.0008f, z - 0.012f), new Vector3(0.16f, top + 0.0008f, z - 0.012f),
-                new Vector3(0.16f, top + 0.0008f, z + 0.012f), new Vector3(-0.16f, top + 0.0008f, z + 0.012f), Vector3.up);
-        }
-
-        _mesh = builder.Build("Battle Ring");
-        return _mesh;
+        Meshes[index] = builder.Build("Battle Arena " + shape);
+        return Meshes[index];
     }
 
-    private static void AddBand(RaceTrack.FlatMeshBuilder builder, int submesh, int index, float inner, float outer, float height)
+    private static void AddBand(RaceTrack.FlatMeshBuilder builder, ArenaShape shape, int submesh, int index, float inner, float outer, float height)
     {
-        builder.AddQuad(submesh, Rim(index, inner, height), Rim(index, outer, height),
-            Rim(index + 1, outer, height), Rim(index + 1, inner, height), Vector3.up);
+        builder.AddQuad(submesh, Rim(shape, index, inner, height), Rim(shape, index, outer, height),
+            Rim(shape, index + 1, outer, height), Rim(shape, index + 1, inner, height), Vector3.up);
     }
 
-    private static Vector3 Rim(int index, float radius, float height)
+    private static Vector3 Rim(ArenaShape shape, int index, float radius, float height)
     {
         var angle = index / (float)Segments * Mathf.PI * 2f;
-        return new Vector3(Mathf.Cos(angle) * radius, height, Mathf.Sin(angle) * radius);
+        var c = Mathf.Cos(angle);
+        var s = Mathf.Sin(angle);
+        if (shape == ArenaShape.Square)
+        {
+            const float power = 2f / SquareExponent;
+            c = Mathf.Sign(c) * Mathf.Pow(Mathf.Abs(c), power);
+            s = Mathf.Sign(s) * Mathf.Pow(Mathf.Abs(s), power);
+        }
+
+        return new Vector3(c * radius, height, s * radius);
     }
 }

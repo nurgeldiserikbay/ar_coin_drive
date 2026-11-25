@@ -9,8 +9,12 @@ using UnityEngine;
 /// </summary>
 public sealed class PhoneViewCamera
 {
-    private readonly List<(Vector3 position, Vector3 lookAt)> _spots;
+    private readonly List<(Vector3 position, Vector3 lookAt, int room)> _spots;
     private int _spot;
+    private Vector3 _position;
+    private Vector3 _moveFrom;
+    private float _move = 1f;
+    private bool _placed;
     private float _yawOffset;
     private float _dragYaw;
     private float _dragPitch;
@@ -24,18 +28,52 @@ public sealed class PhoneViewCamera
 
     public float FieldOfView { get; set; } = 42f;
     public bool HasGyro { get; }
-    public string SpotName => _spot == _spots.Count - 1 ? "LOW" : "SPOT " + (_spot + 1);
+    public int Room => _spots[_spot].room;
+    public string SpotName => (_spot % 2 == 0 ? "corner A" : "corner B");
 
-    public PhoneViewCamera(List<(Vector3 position, Vector3 lookAt)> spots)
+    public PhoneViewCamera(List<(Vector3 position, Vector3 lookAt, int room)> spots)
     {
         _spots = spots;
         HasGyro = SystemInfo.supportsGyroscope;
         if (HasGyro) Input.gyro.enabled = true;
     }
 
+    /// <summary>The other standing spot in the same room.</summary>
     public void NextSpot()
     {
-        _spot = (_spot + 1) % _spots.Count;
+        var room = Room;
+        for (var i = 1; i <= _spots.Count; i++)
+        {
+            var candidate = (_spot + i) % _spots.Count;
+            if (_spots[candidate].room != room) continue;
+            MoveTo(candidate);
+            return;
+        }
+    }
+
+    /// <summary>Walk to the room the car is in (the nearer of its spots), if not there already.</summary>
+    public void FollowRoom(int room, Vector3 car)
+    {
+        if (Room == room) return;
+        var best = -1;
+        var bestDistance = float.MaxValue;
+        for (var i = 0; i < _spots.Count; i++)
+        {
+            if (_spots[i].room != room) continue;
+            var distance = (_spots[i].position - _position).sqrMagnitude;
+            if (distance >= bestDistance) continue;
+            bestDistance = distance;
+            best = i;
+        }
+
+        if (best >= 0) MoveTo(best);
+    }
+
+    private void MoveTo(int spot)
+    {
+        _spot = spot;
+        _moveFrom = _position;
+        _move = _placed ? 0f : 1f;
         Recenter();
     }
 
@@ -56,7 +94,13 @@ public sealed class PhoneViewCamera
 
     public void Update(Transform camera, Camera cameraComponent, Vector3 target, float dt)
     {
-        var (position, lookAt) = _spots[_spot];
+        var (target3, lookAt, _) = _spots[_spot];
+        // Walk smoothly between spots (about 0.8 s) instead of teleporting.
+        _move = Mathf.Min(1f, _move + dt / 0.8f);
+        var eased = _move * _move * (3f - 2f * _move);
+        _position = _placed ? Vector3.Lerp(_moveFrom, target3, eased) : target3;
+        _placed = true;
+        var position = _position;
         camera.position = position;
         if (cameraComponent != null)
             cameraComponent.fieldOfView = Mathf.Lerp(cameraComponent.fieldOfView, FieldOfView, 1f - Mathf.Exp(-10f * dt));
@@ -68,7 +112,8 @@ public sealed class PhoneViewCamera
             if (_needsRecenter)
             {
                 _needsRecenter = false;
-                _yawOffset = Yaw(lookAt - position) - Yaw(device * Vector3.forward);
+                // Recentre so the phone's current heading looks at the car.
+                _yawOffset = Yaw(target - target3) - Yaw(device * Vector3.forward);
                 _hasSmoothed = false;
             }
 

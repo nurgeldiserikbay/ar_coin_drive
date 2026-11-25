@@ -20,7 +20,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private enum GameState { Placing, Ready, Countdown, Racing, Finished }
     // Values are sent over the network: keep Race = 0 and Battle = 1.
     private enum GameMode { Race, Battle, Free }
-    private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage }
+    private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage, Tracks }
 
     private static readonly List<ARRaycastHit> RaycastHits = new List<ARRaycastHit>();
     private const float FreeARHalfExtent = ARDepthObstacleDetector.HalfExtent - 0.15f;
@@ -44,7 +44,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     // Virtual room
     private bool _virtualMode;
     private Transform _virtualTable;
-    private VirtualRoom.Info _room;
+    private VirtualHouse.Info _room;
     private PhoneViewCamera _phoneView;
     private enum ViewMode { Phone, Chase, Driver }
     private ViewMode _view = ViewMode.Phone;
@@ -355,8 +355,9 @@ public sealed partial class ARDemoController : MonoBehaviour
 
         // The living room: sunlight through the window, warm indoor ambient.
         _virtualTable = new GameObject("Virtual Room").transform;
-        _room = VirtualRoom.Build(_virtualTable);
+        _room = VirtualHouse.Build(_virtualTable);
         _phoneView = new PhoneViewCamera(_room.CameraSpots);
+        _phoneView.FollowRoom(4, Vector3.zero); // start in the living room
         if (_keyLight != null)
         {
             _keyLight.transform.rotation = Quaternion.LookRotation(_room.SunDirection);
@@ -507,9 +508,27 @@ public sealed partial class ARDemoController : MonoBehaviour
 
     private void CreateArenaVisuals()
     {
+        // Guests use the host's track (set from state packets), not their own saved choice.
+        if (!IsClient) LoadTrackChoice();
         _trackVisual = RaceTrack.Shared.CreateVisual(_arena);
-        _battleRing = BattleArena.Create(_arena);
+        _battleRing = BattleArena.Create(_arena, _arenaShape);
         SetModeVisuals();
+    }
+
+    private void LoadTrackChoice()
+    {
+        RaceTrack.Select(GameSettings.Track, GameSettings.TrackSize);
+        _arenaShape = GameSettings.Arena;
+        _arenaSize = GameSettings.ArenaSize;
+    }
+
+    /// <summary>Swaps the track and arena for the ones picked in the TRACKS screen (or sent by the host).</summary>
+    private void ApplyTrackChoice()
+    {
+        if (_arena == null) return;
+        if (_trackVisual != null) Destroy(_trackVisual);
+        if (_battleRing != null) Destroy(_battleRing.gameObject);
+        CreateArenaVisuals();
     }
 
     private void SetModeVisuals()
@@ -579,6 +598,8 @@ public sealed partial class ARDemoController : MonoBehaviour
 
         if (_view == ViewMode.Phone && _phoneView != null)
         {
+            // The player walks with the car from room to room.
+            _phoneView.FollowRoom(_room.RoomAt(_player.Position), car.position);
             _phoneView.Update(_arCamera.transform, _arCamera, car.position + Vector3.up * 0.04f, dt);
             return;
         }
@@ -607,9 +628,10 @@ public sealed partial class ARDemoController : MonoBehaviour
         var desiredPosition = car.position - forward * 0.56f + up * 0.40f;
         if (_room != null)
         {
-            // Keep the chase camera inside the room walls.
-            desiredPosition.x = Mathf.Clamp(desiredPosition.x, -VirtualRoom.HalfWidth + 0.12f, VirtualRoom.HalfWidth - 0.12f);
-            desiredPosition.z = Mathf.Clamp(desiredPosition.z, -VirtualRoom.HalfDepth + 0.12f, VirtualRoom.HalfDepth - 0.12f);
+            // Keep the chase camera inside the walls of the room the car is in.
+            var roomRect = _room.RoomRect(_room.RoomAt(_player.Position));
+            desiredPosition.x = Mathf.Clamp(desiredPosition.x, roomRect.xMin + 0.15f, roomRect.xMax - 0.15f);
+            desiredPosition.z = Mathf.Clamp(desiredPosition.z, roomRect.yMin + 0.15f, roomRect.yMax - 0.15f);
         }
 
         var lookTarget = car.position + forward * 0.3f;

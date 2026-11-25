@@ -19,6 +19,65 @@ public static class ProceduralTextures
     public static Texture2D Rug => _rug ? _rug : (_rug = Build("Rug", 256, RugPixel, TextureWrapMode.Clamp));
     public static Texture2D Cardboard => _cardboard ? _cardboard : (_cardboard = Build("Cardboard", 128, CardboardPixel));
 
+    private static Texture2D _checker;
+    private static Texture2D _smallTiles;
+    private static Texture2D _carpet;
+    private static Texture2D _kidsCarpet;
+    private static Texture2D _concrete;
+
+    /// <summary>Large two-tone floor tiles with grout (kitchen, hall).</summary>
+    public static Texture2D CheckerTiles => _checker ? _checker : (_checker = Build("Checker Tiles", 128, CheckerPixel));
+    /// <summary>Small white tiles with grey grout (bathroom, laundry).</summary>
+    public static Texture2D SmallTiles => _smallTiles ? _smallTiles : (_smallTiles = Build("Small Tiles", 128, SmallTilePixel));
+    public static Texture2D Carpet => _carpet ? _carpet : (_carpet = Build("Carpet", 128, CarpetPixel));
+    public static Texture2D KidsCarpet => _kidsCarpet ? _kidsCarpet : (_kidsCarpet = Build("Kids Carpet", 256, KidsCarpetPixel));
+    public static Texture2D Concrete => _concrete ? _concrete : (_concrete = Build("Concrete", 256, ConcretePixel));
+
+    private static Color CheckerPixel(float u, float v)
+    {
+        var grout = Mathf.Repeat(u * 2f, 1f) < 0.03f || Mathf.Repeat(v * 2f, 1f) < 0.03f;
+        if (grout) return new Color(0.55f, 0.55f, 0.53f, 1f);
+        var dark = (Mathf.FloorToInt(u * 2f) + Mathf.FloorToInt(v * 2f)) % 2 == 0;
+        var fleck = (Noise(u, v, 64, 61) - 0.5f) * 0.06f;
+        var value = (dark ? 0.32f : 0.92f) + fleck;
+        return new Color(value, value, value * 0.98f, 1f);
+    }
+
+    private static Color SmallTilePixel(float u, float v)
+    {
+        var grout = Mathf.Repeat(u * 4f, 1f) < 0.05f || Mathf.Repeat(v * 4f, 1f) < 0.05f;
+        if (grout) return new Color(0.70f, 0.71f, 0.72f, 1f);
+        var shade = 0.95f + (Hash(Mathf.FloorToInt(u * 4f), Mathf.FloorToInt(v * 4f), 4, 71) - 0.5f) * 0.05f;
+        return new Color(shade, shade, shade, 1f);
+    }
+
+    private static Color CarpetPixel(float u, float v)
+    {
+        var value = 0.9f + (Noise(u, v, 64, 81) - 0.5f) * 0.18f + (Noise(u, v, 16, 83) - 0.5f) * 0.08f;
+        return new Color(value, value, value, 1f);
+    }
+
+    private static Color KidsCarpetPixel(float u, float v)
+    {
+        // Play mat: soft blue with a road loop, dots and a grass patch.
+        var fuzz = (Noise(u, v, 96, 91) - 0.5f) * 0.06f;
+        Color color = new Color(0.36f, 0.62f, 0.86f);
+        var road = Mathf.Abs(new Vector2(u - 0.5f, (v - 0.5f) * 1.2f).magnitude - 0.32f) < 0.045f;
+        if (road) color = new Color(0.35f, 0.35f, 0.38f);
+        if (u > 0.08f && u < 0.28f && v > 0.08f && v < 0.28f) color = new Color(0.45f, 0.75f, 0.32f);
+        var dot = new Vector2(Mathf.Repeat(u * 6f, 1f) - 0.5f, Mathf.Repeat(v * 6f, 1f) - 0.5f).magnitude < 0.1f;
+        if (dot && !road) color = Color.Lerp(color, new Color(1f, 0.85f, 0.3f), 0.6f);
+        return new Color(color.r + fuzz, color.g + fuzz, color.b + fuzz, 1f);
+    }
+
+    private static Color ConcretePixel(float u, float v)
+    {
+        var value = 0.62f + (Fbm(u, v, 8, 4, 101) - 0.5f) * 0.25f + (Noise(u, v, 128, 103) - 0.5f) * 0.08f;
+        var stain = Fbm(u, v, 3, 2, 107);
+        if (stain > 0.72f) value -= (stain - 0.72f) * 1.2f;
+        return new Color(value, value * 0.99f, value * 0.97f, 1f);
+    }
+
     /// <summary>Round soft-edged alpha spot (contact shadows, cursor).</summary>
     public static Texture2D SoftDot => _softDot ? _softDot : (_softDot = Build("Soft Dot", 64, SoftDotPixel, TextureWrapMode.Clamp));
 

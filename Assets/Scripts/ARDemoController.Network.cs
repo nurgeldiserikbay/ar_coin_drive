@@ -124,6 +124,10 @@ public sealed partial class ARDemoController
             writer.Write((byte)0); // packet type, filled in by LanSession
             writer.Write((byte)_mode);
             writer.Write((byte)_state);
+            writer.Write((byte)RaceTrack.Shared.Layout);
+            writer.Write((byte)RaceTrack.Shared.Size);
+            writer.Write((byte)_arenaShape);
+            writer.Write((byte)_arenaSize);
             writer.Write(_countdown);
             writer.Write(_raceTime);
             writer.Write(_battleRadius);
@@ -202,6 +206,18 @@ public sealed partial class ARDemoController
                 reader.ReadByte();
                 var mode = (GameMode)reader.ReadByte();
                 var state = (GameState)reader.ReadByte();
+                var layout = (TrackLayout)reader.ReadByte();
+                var trackSize = (TrackSize)reader.ReadByte();
+                var arenaShape = (ArenaShape)reader.ReadByte();
+                var arenaSize = Mathf.Clamp(reader.ReadByte(), 0, 2);
+                if (layout != RaceTrack.Shared.Layout || trackSize != RaceTrack.Shared.Size || arenaShape != _arenaShape || arenaSize != _arenaSize)
+                {
+                    RaceTrack.Select(layout, trackSize);
+                    _arenaShape = arenaShape;
+                    _arenaSize = arenaSize;
+                    ApplyTrackChoice();
+                    StartRound();
+                }
                 var countdown = reader.ReadSingle();
                 var raceTime = reader.ReadSingle();
                 var battleRadius = reader.ReadSingle();
