@@ -2,26 +2,31 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// A closed toy racetrack in arena-local metres (x, z on the floor plane). It draws the same
-/// diorama in AR and on the virtual table, and answers "where is the car on the track?".
+/// A closed RC racetrack in arena-local metres (x, z on the floor plane): a textured asphalt
+/// mat with red/white curbs, an astroturf run-off strip, foam-tube barriers and a start gantry.
+/// It has no infield, so in AR the real floor shows through the middle. It also answers
+/// "where is the car on the track?".
 /// </summary>
 public sealed class RaceTrack
 {
     public const float RoadHalfWidth = 0.125f;
     public const float RailOffset = 0.178f;
+    public const float TubeRadius = 0.011f;
 
     private const int SampleCount = 180;
-    private const float RailHeight = 0.020f;
-    private const float RailThickness = 0.010f;
+    private const float CurbWidth = 0.016f;
 
-    private const int Grass = 0;
-    private const int Road = 1;
-    private const int CurbRed = 2;
-    private const int CurbWhite = 3;
-    private const int Line = 4;
-    private const int CheckerDark = 5;
-    private const int Rail = 6;
-    private const int SubmeshCount = 7;
+    private const int Road = 0;
+    private const int CurbRed = 1;
+    private const int CurbWhite = 2;
+    private const int Line = 3;
+    private const int CheckerDark = 4;
+    private const int TubeDark = 5;
+    private const int TubeLight = 6;
+    private const int Turf = 7;
+    private const int Gantry = 8;
+    private const int Banner = 9;
+    private const int SubmeshCount = 10;
 
     private static RaceTrack _shared;
     private static Mesh _mesh;
@@ -74,12 +79,12 @@ public sealed class RaceTrack
         return Vector2.Dot(position - _center[index], _outward[index]);
     }
 
-    /// <summary>Keeps a position between the guard rails. Returns true when a rail was hit.</summary>
+    /// <summary>Keeps a position between the barriers. Returns true when a barrier was hit.</summary>
     public bool ConstrainToRails(ref Vector2 position, float carHalfWidth)
     {
         var index = NearestIndex(position);
         var lateral = Vector2.Dot(position - _center[index], _outward[index]);
-        var limit = RailOffset - RailThickness - carHalfWidth;
+        var limit = RailOffset - TubeRadius - carHalfWidth;
         if (Mathf.Abs(lateral) <= limit) return false;
 
         position = _center[index] + _tangent[index] * Vector2.Dot(position - _center[index], _tangent[index])
@@ -108,16 +113,19 @@ public sealed class RaceTrack
         track.transform.SetParent(parent, false);
         track.AddComponent<MeshFilter>().sharedMesh = GetMesh();
         var trackRenderer = track.AddComponent<MeshRenderer>();
-        trackRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        trackRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
         trackRenderer.sharedMaterials = new[]
         {
-            ProceduralCarFactory.GetMaterial(new Color(0.33f, 0.68f, 0.30f), 0.04f),
-            ProceduralCarFactory.GetMaterial(new Color(0.20f, 0.21f, 0.26f), 0.10f),
-            ProceduralCarFactory.GetMaterial(new Color(0.93f, 0.16f, 0.14f), 0.25f),
-            ProceduralCarFactory.GetMaterial(new Color(0.98f, 0.97f, 0.93f), 0.25f),
-            ProceduralCarFactory.GetMaterial(new Color(0.99f, 0.86f, 0.36f), 0.15f),
-            ProceduralCarFactory.GetMaterial(new Color(0.06f, 0.06f, 0.08f), 0.15f),
-            ProceduralCarFactory.GetMaterial(new Color(0.10f, 0.52f, 0.90f), 0.55f)
+            ProceduralCarFactory.GetMaterial(new Color(0.34f, 0.34f, 0.35f), 0.22f, 0f, ProceduralTextures.Asphalt, 1f),
+            ProceduralCarFactory.GetMaterial(new Color(0.70f, 0.10f, 0.08f), 0.3f),
+            ProceduralCarFactory.GetMaterial(new Color(0.86f, 0.86f, 0.84f), 0.3f),
+            ProceduralCarFactory.GetMaterial(new Color(0.85f, 0.85f, 0.82f), 0.2f),
+            ProceduralCarFactory.GetMaterial(new Color(0.05f, 0.05f, 0.06f), 0.2f),
+            ProceduralCarFactory.GetMaterial(new Color(0.06f, 0.06f, 0.065f), 0.25f),
+            ProceduralCarFactory.GetMaterial(new Color(0.88f, 0.88f, 0.86f), 0.3f),
+            ProceduralCarFactory.GetMaterial(new Color(0.20f, 0.36f, 0.16f), 0.05f, 0f, ProceduralTextures.Fabric, 1f),
+            ProceduralCarFactory.GetMaterial(new Color(0.62f, 0.64f, 0.67f), 0.6f, 0.85f),
+            ProceduralCarFactory.GetMaterial(new Color(0.08f, 0.09f, 0.11f), 0.4f)
         };
         return track;
     }
@@ -126,33 +134,34 @@ public sealed class RaceTrack
     {
         if (_mesh != null) return _mesh;
 
-        var builder = new FlatMeshBuilder(SubmeshCount);
-        var groundEdge = RailOffset + 0.012f;
+        var builder = new FlatMeshBuilder(SubmeshCount, 4f);
         for (var i = 0; i < SampleCount; i++)
         {
-            var next = (i + 1) % SampleCount;
-            builder.AddTriangle(Grass, new Vector3(0f, 0.001f, 0f), Ground(i, groundEdge, 0.001f),
-                Ground(next, groundEdge, 0.001f), Vector3.up);
             AddBand(builder, Road, i, -RoadHalfWidth, RoadHalfWidth, 0.003f);
 
             var curb = i / 3 % 2 == 0 ? CurbRed : CurbWhite;
-            AddBand(builder, curb, i, RoadHalfWidth, RoadHalfWidth + 0.016f, 0.0045f);
-            AddBand(builder, curb, i, -RoadHalfWidth - 0.016f, -RoadHalfWidth, 0.0045f);
+            AddBand(builder, curb, i, RoadHalfWidth, RoadHalfWidth + CurbWidth, 0.0042f);
+            AddBand(builder, curb, i, -RoadHalfWidth - CurbWidth, -RoadHalfWidth, 0.0042f);
+            AddBand(builder, Turf, i, RoadHalfWidth + CurbWidth, RailOffset + 0.02f, 0.002f);
+            AddBand(builder, Turf, i, -RailOffset - 0.02f, -RoadHalfWidth - CurbWidth, 0.002f);
 
             if (i / 4 % 2 == 0 && i > 8 && i < SampleCount - 2)
-                AddBand(builder, Line, i, -0.0035f, 0.0035f, 0.0042f);
+                AddBand(builder, Line, i, -0.003f, 0.003f, 0.0036f);
 
-            AddRail(builder, i, RailOffset, -1f);
-            AddRail(builder, i, -RailOffset, 1f);
+            var sleeve = i / 6 % 4 == 0 ? TubeLight : TubeDark;
+            AddTube(builder, sleeve, i, RailOffset);
+            AddTube(builder, sleeve, i, -RailOffset);
         }
 
         AddStartLine(builder);
+        AddGantry(builder);
         _mesh = builder.Build("Race Track");
         return _mesh;
     }
 
     private Vector3 Ground(int index, float lateral, float height)
     {
+        index = (index % SampleCount + SampleCount) % SampleCount;
         var point = _center[index] + _outward[index] * lateral;
         return new Vector3(point.x, height, point.y);
     }
@@ -164,27 +173,34 @@ public sealed class RaceTrack
             Ground(next, to, height), Ground(next, from, height), Vector3.up);
     }
 
-    private void AddRail(FlatMeshBuilder builder, int index, float lateral, float faceSign)
+    /// <summary>One segment of a foam barrier tube lying along the track edge.</summary>
+    private void AddTube(FlatMeshBuilder builder, int submesh, int index, float lateral)
     {
+        const int sides = 8;
         var next = (index + 1) % SampleCount;
-        var inner = lateral + faceSign * RailThickness * 0.5f;
-        var outer = lateral - faceSign * RailThickness * 0.5f;
-        var a = Ground(index, inner, 0f);
-        var b = Ground(next, inner, 0f);
-        var c = Ground(next, inner, RailHeight);
-        var d = Ground(index, inner, RailHeight);
-        var normal = new Vector3(_outward[index].x, 0f, _outward[index].y) * faceSign;
-        builder.AddQuad(Rail, a, b, c, d, normal);
-        builder.AddQuad(Rail, d, c, Ground(next, outer, RailHeight), Ground(index, outer, RailHeight), Vector3.up);
-        builder.AddQuad(Rail, Ground(index, outer, 0f), Ground(next, outer, 0f),
-            Ground(next, outer, RailHeight), Ground(index, outer, RailHeight), -normal);
+        for (var s = 0; s < sides; s++)
+        {
+            var a0 = s / (float)sides * Mathf.PI * 2f;
+            var a1 = (s + 1) / (float)sides * Mathf.PI * 2f;
+            builder.AddQuadSmooth(submesh,
+                TubePoint(index, lateral, a0, out var n0), TubePoint(next, lateral, a0, out var n1),
+                TubePoint(next, lateral, a1, out var n2), TubePoint(index, lateral, a1, out var n3),
+                n0, n1, n2, n3);
+        }
+    }
+
+    private Vector3 TubePoint(int index, float lateral, float angle, out Vector3 normal)
+    {
+        var outward = new Vector3(_outward[index].x, 0f, _outward[index].y);
+        normal = outward * Mathf.Cos(angle) + Vector3.up * Mathf.Sin(angle);
+        return Ground(index, lateral, TubeRadius) + normal * TubeRadius;
     }
 
     private void AddStartLine(FlatMeshBuilder builder)
     {
         const int across = 10;
         const int along = 2;
-        const float height = 0.0052f;
+        const float height = 0.0045f;
         var cell = RoadHalfWidth * 2f / across;
         var center = _center[0];
         var tangent = _tangent[0];
@@ -198,59 +214,131 @@ public sealed class RaceTrack
                 var lateralFrom = -RoadHalfWidth + column * cell;
                 var alongFrom = row * cell;
                 builder.AddQuad(submesh,
-                    Checker(center, tangent, outward, alongFrom, lateralFrom, height),
-                    Checker(center, tangent, outward, alongFrom, lateralFrom + cell, height),
-                    Checker(center, tangent, outward, alongFrom + cell, lateralFrom + cell, height),
-                    Checker(center, tangent, outward, alongFrom + cell, lateralFrom, height),
+                    Flat(center, tangent, outward, alongFrom, lateralFrom, height),
+                    Flat(center, tangent, outward, alongFrom, lateralFrom + cell, height),
+                    Flat(center, tangent, outward, alongFrom + cell, lateralFrom + cell, height),
+                    Flat(center, tangent, outward, alongFrom + cell, lateralFrom, height),
                     Vector3.up);
             }
         }
     }
 
-    private static Vector3 Checker(Vector2 center, Vector2 tangent, Vector2 outward, float along, float lateral, float height)
+    /// <summary>Start/finish gantry: two posts outside the barriers and a banner over the line.</summary>
+    private void AddGantry(FlatMeshBuilder builder)
+    {
+        var center = _center[0];
+        var tangent = _tangent[0];
+        var outward = _outward[0];
+        var span = RailOffset + 0.035f;
+        const float height = 0.20f;
+        const float post = 0.006f;
+        foreach (var side in new[] { -1f, 1f })
+            builder.AddBox(Gantry, Flat(center, tangent, outward, 0.012f, side * span, height * 0.5f),
+                new Vector3(post, height, post), tangent, outward);
+
+        builder.AddBox(Banner, Flat(center, tangent, outward, 0.012f, 0f, height - 0.018f),
+            new Vector3(span * 2f + 0.012f, 0.036f, 0.004f), tangent, outward);
+        builder.AddBox(Gantry, Flat(center, tangent, outward, 0.012f, 0f, height + 0.002f),
+            new Vector3(span * 2f + 0.014f, 0.005f, 0.008f), tangent, outward);
+    }
+
+    private static Vector3 Flat(Vector2 center, Vector2 tangent, Vector2 outward, float along, float lateral, float height)
     {
         var point = center + tangent * along + outward * lateral;
         return new Vector3(point.x, height, point.y);
     }
 
+    /// <summary>
+    /// Mesh builder with explicit normals and planar UVs (x, z in metres times uvScale), so
+    /// tiled textures keep a constant real-world size across the track.
+    /// </summary>
     internal sealed class FlatMeshBuilder
     {
         private readonly List<Vector3> _vertices = new List<Vector3>();
         private readonly List<Vector3> _normals = new List<Vector3>();
+        private readonly List<Vector2> _uvs = new List<Vector2>();
         private readonly List<int>[] _triangles;
+        private readonly float _uvScale;
 
-        public FlatMeshBuilder(int submeshCount)
+        public FlatMeshBuilder(int submeshCount, float uvScale = 1f)
         {
+            _uvScale = uvScale;
             _triangles = new List<int>[submeshCount];
             for (var i = 0; i < submeshCount; i++)
                 _triangles[i] = new List<int>();
         }
 
-        public void AddTriangle(int submesh, Vector3 a, Vector3 b, Vector3 c, Vector3 normal)
+        public void AddTriangle(int submesh, Vector3 a, Vector3 b, Vector3 c, Vector3 normal) =>
+            AddTriangleSmooth(submesh, a, b, c, normal, normal, normal);
+
+        private void AddTriangleSmooth(int submesh, Vector3 a, Vector3 b, Vector3 c, Vector3 na, Vector3 nb, Vector3 nc)
         {
-            if (Vector3.Dot(Vector3.Cross(b - a, c - a), normal) < 0f)
+            if (Vector3.Dot(Vector3.Cross(b - a, c - a), na + nb + nc) < 0f)
             {
                 var swap = b;
                 b = c;
                 c = swap;
+                var swapNormal = nb;
+                nb = nc;
+                nc = swapNormal;
             }
 
             var start = _vertices.Count;
-            _vertices.Add(a);
-            _vertices.Add(b);
-            _vertices.Add(c);
-            _normals.Add(normal);
-            _normals.Add(normal);
-            _normals.Add(normal);
+            Add(a, na);
+            Add(b, nb);
+            Add(c, nc);
             _triangles[submesh].Add(start);
             _triangles[submesh].Add(start + 1);
             _triangles[submesh].Add(start + 2);
+        }
+
+        private void Add(Vector3 position, Vector3 normal)
+        {
+            _vertices.Add(position);
+            _normals.Add(normal);
+            // Planar mapping chosen by the dominant normal axis.
+            var absolute = new Vector3(Mathf.Abs(normal.x), Mathf.Abs(normal.y), Mathf.Abs(normal.z));
+            var uv = absolute.y >= absolute.x && absolute.y >= absolute.z ? new Vector2(position.x, position.z)
+                : absolute.x >= absolute.z ? new Vector2(position.z, position.y) : new Vector2(position.x, position.y);
+            _uvs.Add(uv * _uvScale);
         }
 
         public void AddQuad(int submesh, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 normal)
         {
             AddTriangle(submesh, a, b, c, normal);
             AddTriangle(submesh, a, c, d, normal);
+        }
+
+        public void AddQuadSmooth(int submesh, Vector3 a, Vector3 b, Vector3 c, Vector3 d,
+            Vector3 na, Vector3 nb, Vector3 nc, Vector3 nd)
+        {
+            AddTriangleSmooth(submesh, a, b, c, na, nb, nc);
+            AddTriangleSmooth(submesh, a, c, d, na, nc, nd);
+        }
+
+        /// <summary>Box whose local x runs along `lateralAxis`, z along `alongAxis` (floor directions).</summary>
+        public void AddBox(int submesh, Vector3 center, Vector3 size, Vector2 alongAxis, Vector2 lateralAxis)
+        {
+            var x = new Vector3(lateralAxis.x, 0f, lateralAxis.y) * (size.x * 0.5f);
+            var y = Vector3.up * (size.y * 0.5f);
+            var z = new Vector3(alongAxis.x, 0f, alongAxis.y) * (size.z * 0.5f);
+            AddBoxAxes(submesh, center, x, y, z);
+        }
+
+        public void AddBoxAxes(int submesh, Vector3 center, Vector3 x, Vector3 y, Vector3 z)
+        {
+            AddBoxFace(submesh, center + x, y, z);
+            AddBoxFace(submesh, center - x, y, z);
+            AddBoxFace(submesh, center + y, x, z);
+            AddBoxFace(submesh, center - y, x, z);
+            AddBoxFace(submesh, center + z, x, y);
+            AddBoxFace(submesh, center - z, x, y);
+
+            void AddBoxFace(int sm, Vector3 faceCenter, Vector3 u, Vector3 v)
+            {
+                var normal = (faceCenter - center).normalized;
+                AddQuad(sm, faceCenter - u - v, faceCenter - u + v, faceCenter + u + v, faceCenter + u - v, normal);
+            }
         }
 
         public Mesh Build(string meshName)
@@ -261,6 +349,7 @@ public sealed class RaceTrack
                 : UnityEngine.Rendering.IndexFormat.UInt16;
             mesh.SetVertices(_vertices);
             mesh.SetNormals(_normals);
+            mesh.SetUVs(0, _uvs);
             mesh.subMeshCount = _triangles.Length;
             for (var i = 0; i < _triangles.Length; i++)
                 mesh.SetTriangles(_triangles[i], i);

@@ -1,15 +1,15 @@
 using UnityEngine;
 
 /// <summary>
-/// Purely visual car motion: wheels roll with travel, front wheels steer, and the body
-/// leans into acceleration and corners. Gameplay position and collisions are unaffected.
+/// Purely visual car motion: wheels roll with travel, front wheels steer, and the sprung shell
+/// rolls into corners, squats and dives with throttle and brake, and rocks on its suspension
+/// after a bump. Gameplay position and collisions are unaffected.
 /// </summary>
 public sealed class ProceduralCarRig : MonoBehaviour
 {
-    private const float MaxSteerAngle = 24f;
-    private const float MaxRoll = 3.2f;
-    private const float MaxPitch = 2.4f;
-    private const float ReferenceSpeed = 0.48f;
+    private const float MaxSteerAngle = 26f;
+    private const float MaxRoll = 4.5f;
+    private const float MaxPitch = 3.2f;
 
     private Transform _body;
     private Transform[] _steerPivots;
@@ -20,6 +20,10 @@ public sealed class ProceduralCarRig : MonoBehaviour
     private float _roll;
     private float _pitch;
     private float _lastSpeed;
+    private float _bumpPitch;
+    private float _bumpVelocity;
+
+    public float ReferenceSpeed { get; set; } = 0.5f;
 
     public void Configure(Transform body, Transform[] steerPivots, Transform[] spinners, float wheelRadius)
     {
@@ -27,6 +31,12 @@ public sealed class ProceduralCarRig : MonoBehaviour
         _steerPivots = steerPivots;
         _spinners = spinners;
         _wheelRadius = wheelRadius;
+    }
+
+    /// <summary>Kicks the suspension after an impact; positive = hit from the front.</summary>
+    public void Bump(float strength)
+    {
+        _bumpVelocity += Mathf.Clamp(strength, -1.5f, 1.5f) * 160f;
     }
 
     public void UpdateVisual(float speed, float steerInput, float deltaTime)
@@ -37,18 +47,24 @@ public sealed class ProceduralCarRig : MonoBehaviour
         for (var i = 0; i < _spinners.Length; i++)
             _spinners[i].localRotation = Quaternion.Euler(_spin, 0f, 0f);
 
-        _steer = Mathf.MoveTowards(_steer, steerInput * MaxSteerAngle, 170f * deltaTime);
+        _steer = Mathf.MoveTowards(_steer, steerInput * MaxSteerAngle, 220f * deltaTime);
         for (var i = 0; i < _steerPivots.Length; i++)
             _steerPivots[i].localRotation = Quaternion.Euler(0f, _steer, 0f);
 
         var acceleration = (speed - _lastSpeed) / deltaTime;
         _lastSpeed = speed;
         var speedRatio = Mathf.Clamp01(Mathf.Abs(speed) / ReferenceSpeed);
-        var targetRoll = steerInput * speedRatio * MaxRoll;
-        var targetPitch = Mathf.Clamp(-acceleration * 1.6f, -MaxPitch, MaxPitch);
-        var blend = 1f - Mathf.Exp(-9f * deltaTime);
+        var targetRoll = steerInput * speedRatio * MaxRoll * Mathf.Sign(speed == 0f ? 1f : speed);
+        var targetPitch = Mathf.Clamp(-acceleration * 1.4f, -MaxPitch, MaxPitch);
+        var blend = 1f - Mathf.Exp(-8f * deltaTime);
         _roll = Mathf.Lerp(_roll, targetRoll, blend);
         _pitch = Mathf.Lerp(_pitch, targetPitch, blend);
-        _body.localRotation = Quaternion.Euler(_pitch, 0f, _roll);
+
+        // Damped spring for the post-impact rocking.
+        _bumpVelocity += (-_bumpPitch * 260f - _bumpVelocity * 14f) * deltaTime;
+        _bumpPitch += _bumpVelocity * deltaTime;
+        _bumpPitch = Mathf.Clamp(_bumpPitch, -8f, 8f);
+
+        _body.localRotation = Quaternion.Euler(_pitch + _bumpPitch, 0f, _roll);
     }
 }

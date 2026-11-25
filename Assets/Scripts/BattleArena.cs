@@ -25,11 +25,11 @@ public static class BattleArena
         ringRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         ringRenderer.sharedMaterials = new[]
         {
-            ProceduralCarFactory.GetMaterial(new Color(0.86f, 0.71f, 0.50f), 0.05f),
-            ProceduralCarFactory.GetMaterial(new Color(0.98f, 0.97f, 0.93f), 0.2f),
-            ProceduralCarFactory.GetMaterial(new Color(0.93f, 0.16f, 0.14f), 0.3f),
-            ProceduralCarFactory.GetMaterial(new Color(0.98f, 0.97f, 0.93f), 0.3f),
-            ProceduralCarFactory.GetMaterial(new Color(0.55f, 0.40f, 0.27f), 0.05f)
+            ProceduralCarFactory.GetMaterial(new Color(0.30f, 0.30f, 0.32f), 0.12f, 0f, ProceduralTextures.Asphalt, 1f),
+            ProceduralCarFactory.GetMaterial(new Color(0.88f, 0.88f, 0.85f), 0.2f),
+            ProceduralCarFactory.GetMaterial(new Color(0.70f, 0.10f, 0.08f), 0.3f),
+            ProceduralCarFactory.GetMaterial(new Color(0.86f, 0.86f, 0.84f), 0.3f),
+            ProceduralCarFactory.GetMaterial(new Color(0.07f, 0.07f, 0.08f), 0.2f)
         };
         return ring.transform;
     }
@@ -45,7 +45,7 @@ public static class BattleArena
         if (_mesh != null) return _mesh;
 
         const float top = 0.004f;
-        var builder = new RaceTrack.FlatMeshBuilder(5);
+        var builder = new RaceTrack.FlatMeshBuilder(5, 3f);
         for (var i = 0; i < Segments; i++)
         {
             builder.AddTriangle(Clay, new Vector3(0f, top, 0f), Rim(i, 0.955f, top), Rim(i + 1, 0.955f, top), Vector3.up);

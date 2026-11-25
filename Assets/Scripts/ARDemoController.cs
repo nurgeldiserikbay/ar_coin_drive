@@ -5,16 +5,22 @@ using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
 /// <summary>
-/// Playable loop: scan and tap a horizontal surface (or play on the virtual island), then race
-/// a computer rival for three laps of the toy track. Coins on the road give a short speed boost;
-/// the fastest finish is saved as the best time.
+/// Playable loop: scan and tap the floor (or play in the virtual living room), then drive an RC
+/// buggy. FREE DRIVE lets it roam the room, bump into real obstacles seen by the depth sensor
+/// and into cones, tyres and walls the player places; RACE is five laps of an RC track against
+/// a rival; BATTLE pushes the rival out of a shrinking ring.
 /// Real obstacle sensing is approximate and device-dependent.
 /// </summary>
 public sealed class ARDemoController : MonoBehaviour
 {
     private enum GameState { Placing, Ready, Countdown, Racing, Finished }
-    private enum GameMode { Race, Battle }
-    private enum ControlAction { None, Reset, Again, Mode, Players, Host, Join }
+    // Values are sent over the network: keep Race = 0 and Battle = 1.
+    private enum GameMode { Race, Battle, Free }
+    private enum ControlAction
+    {
+        None, Reset, Again, Mode, Players, Host, Join,
+        Camera, Spot, Scan, Build, PlaceCone, PlaceTyres, PlaceWall, ClearObstacles
+    }
 
     private sealed class Rival
     {
@@ -52,22 +58,43 @@ public sealed class ARDemoController : MonoBehaviour
     private const float FullSteerSpeed = 0.16f;
 
     private static readonly List<ARRaycastHit> RaycastHits = new List<ARRaycastHit>();
-    private static readonly Color[] ObstacleColors =
-    {
-        new Color(0.12f, 0.72f, 0.86f),
-        new Color(0.98f, 0.46f, 0.18f),
-        new Color(0.43f, 0.78f, 0.28f)
-    };
 
-    // Seconds without a camera frame before the HUD suggests the virtual table.
+    // Free drive: the car is quicker than on the track and roams the room.
+    private const float FreeSpeedMultiplier = 1.5f;
+    private const float FreeARHalfExtent = ARDepthObstacleDetector.HalfExtent - 0.15f;
+    private const int FreeCoinCount = 8;
+    private const float RcScale = 18f;
+
+    // Seconds without a camera frame before the HUD suggests the virtual room.
     private const float ARStartTimeout = 12f;
 
     private ARSession _session;
     private Camera _arCamera;
     private bool _virtualMode;
     private Transform _virtualTable;
+    private VirtualRoom.Info _room;
+    private PhoneViewCamera _phoneView;
+    private bool _chaseCamera;
+    private Light _keyLight;
     private Vector3 _chaseVelocity;
     private bool _snapChaseCamera;
+    private Rect _bounds = Rect.MinMaxRect(-HalfArena, -HalfArena, HalfArena, HalfArena);
+
+    // Obstacles the player places in free drive (they stay until cleared or the floor is re-placed).
+    private readonly List<WorldObstacle> _placed = new List<WorldObstacle>();
+    private readonly List<GameObject> _placedObjects = new List<GameObject>();
+    private Transform _placedRoot;
+    private bool _buildMode;
+    private ObstacleKind _buildKind = ObstacleKind.Cone;
+    private Rect _cameraRect;
+    private Rect _spotRect;
+    private Rect _scanRect;
+    private Rect _buildRect;
+    private Rect _coneRect;
+    private Rect _tyresRect;
+    private Rect _wallRect;
+    private Rect _clearRect;
+    private float _pinchDistance;
     private Rect _noArRect;
     private ARRaycastManager _raycastManager;
     private ARPlaneManager _planeManager;
@@ -82,7 +109,6 @@ public sealed class ARDemoController : MonoBehaviour
     private ProceduralCarRig _carRig;
     private readonly List<Transform> _coins = new List<Transform>();
     private readonly List<float> _coinRespawnAt = new List<float>();
-    private readonly List<Vector2> _obstaclePositions = new List<Vector2>();
     private readonly List<Vector2> _coinLayout = new List<Vector2>();
     private Rival _rival;
 
@@ -92,7 +118,7 @@ public sealed class ARDemoController : MonoBehaviour
     private const float BattleEndRadius = 0.30f;
     private const float BattleShrinkSeconds = 40f;
     private const float BattleStartOffset = 0.29f;
-    private GameMode _mode = GameMode.Race;
+    private GameMode _mode = GameMode.Free;
     private GameObject _trackVisual;
     private Transform _battleRing;
     private float _battleRadius = BattleStartRadius;
@@ -173,7 +199,42 @@ public sealed class ARDemoController : MonoBehaviour
         _anchorManager = FindAnyObjectByType<ARAnchorManager>();
         _depthDetector = FindAnyObjectByType<ARDepthObstacleDetector>();
         _bestTime = PlayerPrefs.GetFloat(BestTimeKey, 0f);
-        EnsureSceneLight();
+        _keyLight = EnsureSceneLight();
+        ConfigureShadows(4f);
+        SetAmbient(new Color(0.62f, 0.63f, 0.66f), new Color(0.48f, 0.46f, 0.44f), new Color(0.26f, 0.24f, 0.22f));
+
+        // Match the virtual light to the real room on AR devices.
+        if (_cameraManager != null && !_cameraManager.TryGetComponent<ARLightEstimation>(out _))
+            _cameraManager.gameObject.AddComponent<ARLightEstimation>().Configure(_keyLight);
+        if (_arCamera != null) _arCamera.nearClipPlane = 0.03f;
+    }
+
+    /// <summary>Real-time soft shadows sized for a car a few metres from the camera.</summary>
+    private void ConfigureShadows(float distance)
+    {
+        QualitySettings.shadows = ShadowQuality.All;
+        QualitySettings.shadowResolution = ShadowResolution.High;
+        QualitySettings.shadowCascades = 1;
+        QualitySettings.shadowDistance = distance;
+        QualitySettings.shadowProjection = ShadowProjection.StableFit;
+        if (_keyLight == null) return;
+        _keyLight.shadows = LightShadows.Soft;
+        _keyLight.shadowStrength = 0.85f;
+        // Default biases are tuned for metre-sized objects and detach a 20 cm car's shadow.
+        _keyLight.shadowBias = 0.01f;
+        _keyLight.shadowNormalBias = 0.08f;
+        _keyLight.shadowNearPlane = 0.1f;
+    }
+
+    /// <summary>Sky / horizon / ground ambient written straight into the ambient probe.</summary>
+    private static void SetAmbient(Color sky, Color equator, Color ground)
+    {
+        var sh = new UnityEngine.Rendering.SphericalHarmonicsL2();
+        sh.AddAmbientLight(equator);
+        sh.AddDirectionalLight(Vector3.up, (sky - equator) * 1.3f, 1f);
+        sh.AddDirectionalLight(Vector3.down, (ground - equator) * 1.3f, 1f);
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
+        RenderSettings.ambientProbe = sh;
     }
 
     private void Start()
@@ -191,7 +252,7 @@ public sealed class ARDemoController : MonoBehaviour
             yield return ARSession.CheckAvailability();
 
         if (ARSession.state == ARSessionState.Unsupported && !_virtualMode)
-            EnterVirtualMode("This device does not support AR, so you are playing on a virtual table.");
+            EnterVirtualMode("This device does not support AR, so you are playing in a virtual room.");
     }
 
     private void EnterVirtualMode(string reason)
@@ -225,78 +286,60 @@ public sealed class ARDemoController : MonoBehaviour
             if (_arCamera.TryGetComponent<ARCameraManager>(out var cameraManager)) cameraManager.enabled = false;
             ARRigSetup.SetPoseDriverEnabled(_arCamera, false);
             _arCamera.clearFlags = CameraClearFlags.SolidColor;
-            _arCamera.backgroundColor = new Color(0.56f, 0.70f, 0.80f);
+            _arCamera.backgroundColor = new Color(0.80f, 0.80f, 0.78f);
+            _arCamera.farClipPlane = 20f;
         }
 
         if (_session != null) _session.enabled = false;
 
-        CreateVirtualTable();
+        // The living room: sunlight through the window, warm indoor ambient, longer shadows.
+        _virtualTable = new GameObject("Virtual Room").transform;
+        _room = VirtualRoom.Build(_virtualTable);
+        _phoneView = new PhoneViewCamera(_room.CameraSpots);
+        if (_keyLight != null)
+        {
+            _keyLight.transform.rotation = Quaternion.LookRotation(_room.SunDirection);
+            _keyLight.color = new Color(1f, 0.95f, 0.86f);
+            _keyLight.intensity = 0.88f;
+        }
+
+        ConfigureShadows(4.5f);
+        SetAmbient(new Color(0.50f, 0.52f, 0.56f), new Color(0.40f, 0.37f, 0.34f), new Color(0.24f, 0.20f, 0.16f));
+
         _arena = new GameObject("Bounded Play Area").transform;
         _arena.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
         CreateArenaVisuals();
         StartRound();
-        _message = reason + " Press GO to start.";
+        _message = reason + " " + _message;
     }
 
-    /// <summary>A small landscaped island around the track for players without AR.</summary>
-    private void CreateVirtualTable()
-    {
-        _virtualTable = new GameObject("Virtual Table").transform;
-        MakeScenery("Meadow", new Vector3(0f, -0.015f, 0f), new Vector3(2.3f, 0.03f, 2.3f),
-            new Color(0.40f, 0.70f, 0.33f));
-        MakeScenery("Island Edge", new Vector3(0f, -0.09f, 0f), new Vector3(2.36f, 0.14f, 2.36f),
-            new Color(0.58f, 0.40f, 0.25f));
-        MakeScenery("Distant Ground", new Vector3(0f, -0.8f, 0f), new Vector3(40f, 0.02f, 40f),
-            new Color(0.48f, 0.72f, 0.56f));
-
-        var treeSpots = new[]
-        {
-            new Vector2(-0.95f, -0.92f), new Vector2(-0.78f, -1.02f), new Vector2(0.96f, -0.90f),
-            new Vector2(1.01f, 0.72f), new Vector2(0.84f, 0.99f), new Vector2(-0.98f, 0.88f),
-            new Vector2(-1.03f, 0.05f), new Vector2(1.04f, -0.08f), new Vector2(0.02f, 1.04f),
-            new Vector2(-0.06f, -1.05f)
-        };
-        for (var i = 0; i < treeSpots.Length; i++)
-            MakeTree(treeSpots[i], 0.8f + (i * 37 % 10) * 0.05f, i % 3);
-    }
-
-    private void MakeTree(Vector2 spot, float size, int tint)
-    {
-        var foliage = tint == 0 ? new Color(0.20f, 0.56f, 0.28f)
-            : tint == 1 ? new Color(0.28f, 0.64f, 0.26f) : new Color(0.16f, 0.48f, 0.30f);
-        var trunkHeight = 0.09f * size;
-        MakeScenery("Tree Trunk", new Vector3(spot.x, trunkHeight, spot.y),
-            new Vector3(0.04f, trunkHeight, 0.04f) * size, new Color(0.42f, 0.27f, 0.16f), PrimitiveType.Cylinder);
-        MakeScenery("Tree Crown", new Vector3(spot.x, 0.25f * size, spot.y),
-            Vector3.one * 0.25f * size, foliage, PrimitiveType.Sphere);
-        MakeScenery("Tree Crown Top", new Vector3(spot.x + 0.025f * size, 0.36f * size, spot.y - 0.015f * size),
-            Vector3.one * 0.16f * size, Color.Lerp(foliage, Color.white, 0.10f), PrimitiveType.Sphere);
-    }
-
-    private void MakeScenery(string objectName, Vector3 position, Vector3 scale, Color color,
-        PrimitiveType shape = PrimitiveType.Cube)
-    {
-        var part = GameObject.CreatePrimitive(shape);
-        part.name = objectName;
-        part.transform.SetParent(_virtualTable, false);
-        part.transform.localPosition = position;
-        part.transform.localScale = scale;
-        var material = ProceduralCarFactory.GetMaterial(color);
-        if (material != null) part.GetComponent<Renderer>().sharedMaterial = material;
-        // Builds strip SphereCollider/CapsuleCollider (no scene uses them), so CreatePrimitive may add none.
-        if (part.TryGetComponent<Collider>(out var collider)) Destroy(collider);
-    }
-
-    /// <summary>Chase camera for the virtual table; in AR the phone itself is the camera.</summary>
+    /// <summary>
+    /// Virtual room camera: the phone films the car from where the player stands (or a chase
+    /// camera if chosen). In AR the phone itself is the camera.
+    /// </summary>
     private void LateUpdate()
     {
         if (!_virtualMode || _arCamera == null || _car == null) return;
 
+        if (!_chaseCamera && _phoneView != null)
+        {
+            _phoneView.Update(_arCamera.transform, _arCamera, _car.position + Vector3.up * 0.04f, Time.deltaTime);
+            return;
+        }
+
+        if (Mathf.Abs(_arCamera.fieldOfView - 60f) > 0.01f) _arCamera.fieldOfView = 60f;
         var forward2 = HeadingToForward(_carHeading);
         var forward = _arena.TransformDirection(new Vector3(forward2.x, 0f, forward2.y));
         var up = _arena.up;
         var carPosition = _car.position;
         var desiredPosition = carPosition - forward * 0.56f + up * 0.40f;
+        if (_room != null)
+        {
+            // Keep the chase camera inside the room walls.
+            desiredPosition.x = Mathf.Clamp(desiredPosition.x, -VirtualRoom.HalfWidth + 0.12f, VirtualRoom.HalfWidth - 0.12f);
+            desiredPosition.z = Mathf.Clamp(desiredPosition.z, -VirtualRoom.HalfDepth + 0.12f, VirtualRoom.HalfDepth - 0.12f);
+        }
+
         var lookTarget = carPosition + forward * 0.3f;
         var cameraTransform = _arCamera.transform;
 
@@ -330,16 +373,17 @@ public sealed class ARDemoController : MonoBehaviour
     /// <summary>
     /// Lit procedural models render almost black without a light; older generated scenes have none.
     /// </summary>
-    private static void EnsureSceneLight()
+    private static Light EnsureSceneLight()
     {
-        if (FindAnyObjectByType<Light>() != null) return;
+        foreach (var existing in FindObjectsByType<Light>())
+            if (existing.type == LightType.Directional) return existing;
 
         var lightObject = new GameObject("AR Key Light");
         lightObject.transform.rotation = Quaternion.Euler(55f, -35f, 0f);
         var keyLight = lightObject.AddComponent<Light>();
         keyLight.type = LightType.Directional;
         keyLight.intensity = 1.05f;
-        keyLight.shadows = LightShadows.None;
+        return keyLight;
     }
 
     private void Update()
@@ -368,6 +412,8 @@ public sealed class ARDemoController : MonoBehaviour
             StartNetwork(action == ControlAction.Host);
             return;
         }
+
+        if (HandleViewAndBuildAction(action)) return;
 
         if (IsClient)
         {
@@ -400,7 +446,11 @@ public sealed class ARDemoController : MonoBehaviour
 
         if (action == ControlAction.Mode)
         {
-            _mode = _mode == GameMode.Race ? GameMode.Battle : GameMode.Race;
+            // FREE -> RACE -> BATTLE; free drive is single-player only.
+            _mode = _mode == GameMode.Free ? GameMode.Race
+                : _mode == GameMode.Race ? GameMode.Battle
+                : _net != null ? GameMode.Race : GameMode.Free;
+            _buildMode = false;
             SetModeVisuals();
             StartRound();
             return;
@@ -430,7 +480,7 @@ public sealed class ARDemoController : MonoBehaviour
         if (_state == GameState.Racing && _knockoutUntil <= 0f)
             _raceTime += dt;
 
-        if (_state != GameState.Racing || _knockoutUntil > 0f)
+        if (_state != GameState.Racing || _knockoutUntil > 0f || _buildMode)
         {
             _driveInput = 0f;
             _steerInput = 0f;
@@ -450,12 +500,178 @@ public sealed class ARDemoController : MonoBehaviour
             UpdateRaceProgress();
             AnimateAndCollectCoins();
         }
-        else
+        else if (_mode == GameMode.Battle)
         {
             UpdateBattle(dt);
         }
+        else
+        {
+            AnimateAndCollectCoins();
+        }
 
         SendStateToClient();
+    }
+
+    // ---------------------------------------------------------------- camera, scan and build
+
+    /// <summary>View buttons (any player) and obstacle building (free drive). True when handled.</summary>
+    private bool HandleViewAndBuildAction(ControlAction action)
+    {
+        switch (action)
+        {
+            case ControlAction.Camera:
+                _chaseCamera = !_chaseCamera;
+                _snapChaseCamera = true;
+                _phoneView?.Recenter();
+                ShowHint(_chaseCamera ? "Chase camera" : "Phone camera: turn your phone to look around");
+                return true;
+            case ControlAction.Spot:
+                _phoneView?.NextSpot();
+                ShowHint(_phoneView != null ? "Standing at " + _phoneView.SpotName : null);
+                return true;
+            case ControlAction.Scan:
+                if (_depthDetector != null) _depthDetector.ShowOverlay = !_depthDetector.ShowOverlay;
+                return true;
+            case ControlAction.Build:
+                _buildMode = !_buildMode;
+                _message = _buildMode ? BuildMessage() : FreeDriveMessage();
+                return true;
+            case ControlAction.PlaceCone:
+                _buildKind = ObstacleKind.Cone;
+                _message = BuildMessage();
+                return true;
+            case ControlAction.PlaceTyres:
+                _buildKind = ObstacleKind.Tyres;
+                _message = BuildMessage();
+                return true;
+            case ControlAction.PlaceWall:
+                _buildKind = ObstacleKind.Wall;
+                _message = BuildMessage();
+                return true;
+            case ControlAction.ClearObstacles:
+                ClearPlacedObstacles();
+                _message = "All placed obstacles removed. " + BuildMessage();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private string BuildMessage()
+    {
+        var name = _buildKind == ObstacleKind.Cone ? "a cone" : _buildKind == ObstacleKind.Tyres ? "a tyre stack" : "a wall";
+        return "BUILD: tap the floor to place " + name + ", tap an obstacle to remove it. DONE to drive.";
+    }
+
+    private string FreeDriveMessage() => _virtualMode
+        ? "Free drive. Turn your phone to follow the car; hit the furniture, collect coins."
+        : "Free drive. Real objects stop the car (orange = what depth sees). BUILD adds obstacles.";
+
+    /// <summary>Screen tap in build mode: remove the obstacle under the finger or place a new one.</summary>
+    private void HandleBuildTap(Vector2 screenPosition)
+    {
+        if (_arena == null || _arCamera == null) return;
+        var ray = _arCamera.ScreenPointToRay(screenPosition);
+        var plane = new Plane(_arena.up, _arena.position);
+        if (!plane.Raycast(ray, out var distance) || distance > 8f)
+        {
+            ShowHint("Point at the floor");
+            return;
+        }
+
+        var local = _arena.InverseTransformPoint(ray.GetPoint(distance));
+        var point = new Vector2(local.x, local.z);
+
+        for (var i = _placed.Count - 1; i >= 0; i--)
+        {
+            if (!_placed[i].Contains(point, 0.03f)) continue;
+            if (_placedObjects[i] != null) Destroy(_placedObjects[i]);
+            _placed.RemoveAt(i);
+            _placedObjects.RemoveAt(i);
+            ShowHint("Removed");
+            return;
+        }
+
+        if (!_bounds.Contains(point))
+        {
+            ShowHint("Too far away");
+            return;
+        }
+
+        // Walls face the phone: their long side runs across the view.
+        var cameraRight = _arena.InverseTransformDirection(_arCamera.transform.right);
+        var angle = _buildKind == ObstacleKind.Wall ? Mathf.Atan2(-cameraRight.z, cameraRight.x) * Mathf.Rad2Deg : 0f;
+        var footprint = ProceduralCarFactory.Footprint(_buildKind, point, angle);
+        if (CarCollision.Overlap(_carPosition, _carHeading, ProceduralCarFactory.CarHalfWidth,
+                ProceduralCarFactory.CarHalfLength, footprint, out _, out _))
+        {
+            ShowHint("The car is in the way");
+            return;
+        }
+
+        if (_placedRoot == null)
+        {
+            _placedRoot = new GameObject("Placed Obstacles").transform;
+            _placedRoot.SetParent(_arena, false);
+        }
+
+        _placed.Add(footprint);
+        _placedObjects.Add(ProceduralCarFactory.CreateObstacle(_placedRoot, _buildKind, point, angle));
+        ShowHint(_placed.Count + " placed");
+    }
+
+    private void ClearPlacedObstacles()
+    {
+        foreach (var placed in _placedObjects)
+            if (placed != null) Destroy(placed);
+        _placed.Clear();
+        _placedObjects.Clear();
+    }
+
+    /// <summary>
+    /// Everything solid around the car: placed obstacles (free drive), the room's furniture
+    /// (virtual room), and in AR the depth map and tracked vertical planes. The normal points
+    /// away from what was hit.
+    /// </summary>
+    private bool CollidesWithWorld(Vector2 position, float heading, Vector2 travel, out Vector2 normal, out float depth)
+    {
+        const float halfWidth = ProceduralCarFactory.CarHalfWidth;
+        const float halfLength = ProceduralCarFactory.CarHalfLength;
+        var push = Vector2.zero;
+        var deepest = 0f;
+
+        if (_mode == GameMode.Free)
+        {
+            for (var i = 0; i < _placed.Count; i++)
+                Accumulate(CarCollision.Overlap(position, heading, halfWidth, halfLength, _placed[i], out var n, out var d), n, d);
+        }
+
+        if (_room != null)
+        {
+            for (var i = 0; i < _room.Obstacles.Count; i++)
+                Accumulate(CarCollision.Overlap(position, heading, halfWidth, halfLength, _room.Obstacles[i], out var n, out var d), n, d);
+        }
+
+        if (!_virtualMode)
+        {
+            if (_depthDetector != null)
+                Accumulate(_depthDetector.Overlap(position, heading, halfWidth, halfLength, out var n, out var d), n, d);
+
+            if (travel.sqrMagnitude > 0.0000001f
+                && IsBlockedByDetectedVerticalSurface(new Vector3(position.x, 0f, position.y), new Vector3(travel.x, 0f, travel.y).normalized))
+                Accumulate(true, -travel.normalized, 0.01f);
+        }
+
+        normal = push.sqrMagnitude > 0.0000001f ? push.normalized : Vector2.zero;
+        depth = deepest;
+        return deepest > 0f;
+
+        void Accumulate(bool hit, Vector2 n, float d)
+        {
+            if (!hit) return;
+            push += n * Mathf.Max(d, 0.001f);
+            deepest = Mathf.Max(deepest, Mathf.Max(d, 0.001f));
+        }
     }
 
     // ---------------------------------------------------------------- placement
@@ -481,7 +697,7 @@ public sealed class ARDemoController : MonoBehaviour
         var guiPoint = ToGuiPoint(screenPosition);
         if (Expand(_noArRect).Contains(guiPoint))
         {
-            EnterVirtualMode("Playing on a virtual table without AR.");
+            EnterVirtualMode("Playing in a virtual room without AR.");
             return;
         }
 
@@ -563,12 +779,37 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         CreateArenaVisuals();
+        CreateShadowCatcher();
         if (_depthDetector != null)
             _depthDetector.SetArena(_arena);
 
         StartRound();
         if (_anchor == null)
-            _message = "Placed without an AR anchor. Avoid moving too far from this spot. Press GO to start.";
+            _message = "Placed without an AR anchor. Avoid moving too far from this spot. " + _message;
+    }
+
+    /// <summary>Invisible floor that lets virtual shadows fall on the real floor.</summary>
+    private void CreateShadowCatcher()
+    {
+        var shader = Shader.Find("AR Coin Drive/Shadow Catcher");
+        if (shader == null || _arena == null) return;
+        const float half = ARDepthObstacleDetector.HalfExtent;
+        var mesh = new Mesh { name = "Shadow Catcher" };
+        mesh.SetVertices(new[]
+        {
+            new Vector3(-half, 0f, -half), new Vector3(-half, 0f, half), new Vector3(half, 0f, half), new Vector3(half, 0f, -half)
+        });
+        mesh.SetNormals(new[] { Vector3.up, Vector3.up, Vector3.up, Vector3.up });
+        mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
+        mesh.RecalculateBounds();
+        var catcher = new GameObject("Shadow Catcher");
+        catcher.transform.SetParent(_arena, false);
+        catcher.transform.localPosition = Vector3.up * 0.0005f;
+        catcher.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var meshRenderer = catcher.AddComponent<MeshRenderer>();
+        meshRenderer.sharedMaterial = new Material(shader) { name = "Shadow Catcher" };
+        meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        meshRenderer.receiveShadows = true;
     }
 
     // ---------------------------------------------------------------- rounds
@@ -578,7 +819,6 @@ public sealed class ARDemoController : MonoBehaviour
         if (_roundRoot != null) Destroy(_roundRoot.gameObject);
         _coins.Clear();
         _coinRespawnAt.Clear();
-        _obstaclePositions.Clear();
         _score = 0;
         _speed = 0f;
         _newBest = false;
@@ -586,9 +826,18 @@ public sealed class ARDemoController : MonoBehaviour
         _boostUntil = 0f;
         _goFlashUntil = 0f;
         _hint = null;
+        _playerKnock = Vector2.zero;
+        _playerFall = 0f;
 
         _roundRoot = new GameObject("Round").transform;
         _roundRoot.SetParent(_arena, false);
+        UpdateBounds();
+
+        if (_mode == GameMode.Free)
+        {
+            StartFreeDrive();
+            return;
+        }
 
         var track = RaceTrack.Shared;
         _carPosition = track.GridPosition(0);
@@ -598,7 +847,8 @@ public sealed class ARDemoController : MonoBehaviour
         StartLapCounter(_carPosition, out _playerLaps, out _playerLastProgress);
         ApplyCarTransform();
 
-        var rivalCar = ProceduralCarFactory.CreateCar(_roundRoot, new Color(0.10f, 0.42f, 0.92f)).transform;
+        var rivalCar = ProceduralCarFactory.CreateCar(_roundRoot, new Color(0.06f, 0.24f, 0.72f),
+            new Color(0.98f, 0.78f, 0.12f)).transform;
         _rival = new Rival
         {
             Car = rivalCar,
@@ -622,13 +872,6 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         GenerateLayout();
-        for (var i = 0; i < _obstaclePositions.Count; i++)
-        {
-            var position = _obstaclePositions[i];
-            ProceduralCarFactory.CreateObstacle(_roundRoot,
-                new Vector3(position.x, 0f, position.y), ObstacleColors[i % ObstacleColors.Length]);
-        }
-
         for (var i = 0; i < _coinLayout.Count; i++)
         {
             var point = _coinLayout[i];
@@ -640,6 +883,72 @@ public sealed class ARDemoController : MonoBehaviour
         _snapChaseCamera = true;
         _state = GameState.Ready;
         _message = "On the grid. Hold GO to start the countdown.";
+    }
+
+    /// <summary>Where the car may drive: the room in VR, the depth map area in AR free drive, else the arena.</summary>
+    private void UpdateBounds()
+    {
+        if (_mode != GameMode.Free)
+            _bounds = Rect.MinMaxRect(-HalfArena, -HalfArena, HalfArena, HalfArena);
+        else if (_room != null)
+            _bounds = _room.Bounds;
+        else
+            _bounds = Rect.MinMaxRect(-FreeARHalfExtent, -FreeARHalfExtent, FreeARHalfExtent, FreeARHalfExtent);
+    }
+
+    /// <summary>Free drive: just the buggy (facing away from the phone) and coins around the room.</summary>
+    private void StartFreeDrive()
+    {
+        _rival = null;
+        _playerWins = 0;
+        _rivalWins = 0;
+        _knockoutUntil = 0f;
+
+        _carPosition = _virtualMode ? new Vector2(0f, -0.5f) : Vector2.zero;
+        _carHeading = 0f;
+        if (!_virtualMode && _arCamera != null)
+        {
+            var forward = _arena.InverseTransformDirection(_arCamera.transform.forward);
+            if (forward.x * forward.x + forward.z * forward.z > 0.0001f)
+                _carHeading = Mathf.Atan2(forward.x, forward.z) * Mathf.Rad2Deg;
+        }
+
+        _car = ProceduralCarFactory.CreateCar(_roundRoot).transform;
+        _carRig = _car.GetComponent<ProceduralCarRig>();
+        if (_carRig != null) _carRig.ReferenceSpeed = MaxSpeed * FreeSpeedMultiplier;
+        ApplyCarTransform();
+
+        var random = new System.Random();
+        var spread = _virtualMode ? 1.75f : 1.3f;
+        for (var attempt = 0; attempt < 200 && _coins.Count < FreeCoinCount; attempt++)
+        {
+            var angle = (float)random.NextDouble() * Mathf.PI * 2f;
+            var distance = Mathf.Sqrt((float)random.NextDouble()) * spread;
+            var point = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * distance;
+            if (!IsGoodCoinSpot(point)) continue;
+            var coin = ProceduralCarFactory.CreateCoin(_roundRoot, new Vector3(point.x, 0.06f, point.y));
+            _coins.Add(coin.transform);
+            _coinRespawnAt.Add(0f);
+        }
+
+        _snapChaseCamera = true;
+        _phoneView?.Recenter();
+        _state = GameState.Racing;
+        _message = FreeDriveMessage();
+    }
+
+    private bool IsGoodCoinSpot(Vector2 point)
+    {
+        var inner = new Rect(_bounds.xMin + 0.15f, _bounds.yMin + 0.15f, _bounds.width - 0.3f, _bounds.height - 0.3f);
+        if (!inner.Contains(point) || (point - _carPosition).magnitude < 0.4f) return false;
+        foreach (var coin in _coins)
+            if ((new Vector2(coin.localPosition.x, coin.localPosition.z) - point).magnitude < 0.3f) return false;
+        foreach (var obstacle in _placed)
+            if (obstacle.Contains(point, 0.12f)) return false;
+        if (_room != null)
+            foreach (var obstacle in _room.Obstacles)
+                if (obstacle.Contains(point, 0.12f)) return false;
+        return _depthDetector == null || !_depthDetector.IsSolid(point);
     }
 
     private void FinishRace()
@@ -713,6 +1022,14 @@ public sealed class ARDemoController : MonoBehaviour
 
         if (!_net.Connected || _netWasConnected) return;
         _netWasConnected = true;
+        if (_mode == GameMode.Free)
+        {
+            // Two players race or battle; free drive is single-player.
+            _mode = GameMode.Race;
+            _buildMode = false;
+            SetModeVisuals();
+        }
+
         StartRound();
         _snapNetworkCars = true;
         _message = _net.Role == LanSession.SessionRole.Host
@@ -924,6 +1241,7 @@ public sealed class ARDemoController : MonoBehaviour
     {
         if (_trackVisual != null) _trackVisual.SetActive(_mode == GameMode.Race);
         if (_battleRing != null) _battleRing.gameObject.SetActive(_mode == GameMode.Battle);
+        if (_placedRoot != null) _placedRoot.gameObject.SetActive(_mode == GameMode.Free);
         BattleArena.SetRadius(_battleRing, BattleStartRadius);
     }
 
@@ -1044,7 +1362,6 @@ public sealed class ARDemoController : MonoBehaviour
     /// <summary>Spreads boost coins around the lap with a little sideways variety each round.</summary>
     private void GenerateLayout()
     {
-        _obstaclePositions.Clear();
         _coinLayout.Clear();
         for (var i = 0; i < CoinCount; i++)
         {
@@ -1199,7 +1516,7 @@ public sealed class ARDemoController : MonoBehaviour
     }
 
     /// <summary>Knock-back from hits slides a car and fades out quickly.</summary>
-    private static void ApplyKnock(ref Vector2 position, ref Vector2 knock, float dt)
+    private void ApplyKnock(ref Vector2 position, ref Vector2 knock, float dt)
     {
         position += knock * dt;
         knock *= Mathf.Exp(-3.2f * dt);
@@ -1228,32 +1545,63 @@ public sealed class ARDemoController : MonoBehaviour
         }
 
         var battle = _mode == GameMode.Battle;
-        var position = _carPosition;
-        var heading = _carHeading;
-        var boost = Time.time < _boostUntil ? BoostMultiplier : 1f;
-        StepCar(ref position, ref heading, ref _speed, _driveInput, _steerInput, boost, dt, !battle);
+        var start = _carPosition;
+        var startHeading = _carHeading;
+        var position = start;
+        var heading = startHeading;
+        var boost = (Time.time < _boostUntil ? BoostMultiplier : 1f) * (_mode == GameMode.Free ? FreeSpeedMultiplier : 1f);
+        StepCar(ref position, ref heading, ref _speed, _driveInput, _steerInput, boost, dt, _mode == GameMode.Race);
         if (battle)
             ApplyKnock(ref position, ref _playerKnock, dt);
-        if (Mathf.Abs(_speed) < 0.0001f && _playerKnock.sqrMagnitude < 0.0001f) return;
-
-        // In AR, real walls and objects seen by the depth sensor can still stop the car.
-        var travelDirection = HeadingToForward(heading) * Mathf.Sign(_speed);
-        if (IsBlocked(position, heading, travelDirection))
-        {
-            _speed = 0f;
-            ShowHint("Bump! Back up and steer around it.");
+        if (Mathf.Abs(_speed) < 0.0001f && _playerKnock.sqrMagnitude < 0.0001f && Mathf.Approximately(heading, startHeading))
             return;
+
+        var travel = position - start;
+        if (CollidesWithWorld(position, heading, travel, out var normal, out var depth))
+        {
+            if (CollidesWithWorld(start, startHeading, travel, out var startNormal, out var startDepth))
+            {
+                // Already touching (a new obstacle appeared in the depth map, or one was placed):
+                // let the car ease out instead of freezing it.
+                position += startNormal * Mathf.Min(startDepth, 0.6f * dt);
+            }
+            else
+            {
+                // Slide along the surface: drop the part of the move that goes into it.
+                var into = Vector2.Dot(travel, normal);
+                var slide = start + (into < 0f ? travel - normal * into : travel);
+                if (!CollidesWithWorld(slide, heading, travel, out _, out _)) position = slide;
+                else if (!CollidesWithWorld(start, heading, travel, out _, out _)) position = start;
+                else
+                {
+                    position = start;
+                    heading = startHeading;
+                }
+
+                // Hitting it head-on bounces the car back and rocks the shell; a glancing hit scrapes.
+                var approach = -Vector2.Dot(HeadingToForward(startHeading) * _speed, normal);
+                if (approach > 0.3f)
+                {
+                    if (_carRig != null) _carRig.Bump(Mathf.Sign(_speed) * approach / (MaxSpeed * FreeSpeedMultiplier));
+                    _speed = -_speed * 0.25f;
+                    ShowHint(approach > 0.45f ? "CRASH!" : "Bump!");
+                }
+                else
+                {
+                    _speed *= Mathf.Exp(-(4f + 10f * Mathf.Clamp01(-Vector2.Dot(HeadingToForward(startHeading), normal))) * dt);
+                }
+            }
         }
 
         _carPosition = position;
         _carHeading = heading;
     }
 
-    /// <summary>Shared toy-car physics for the player and the rival.</summary>
-    private static void StepCar(ref Vector2 position, ref float heading, ref float speed,
+    /// <summary>Shared RC-car physics for the player and the rival.</summary>
+    private void StepCar(ref Vector2 position, ref float heading, ref float speed,
         float drive, float steer, float speedMultiplier, float dt, bool onTrack)
     {
-        // Leaving the asphalt onto the grass costs speed (the battle ring has no grass).
+        // Leaving the asphalt onto the astroturf run-off costs speed.
         var onRoad = !onTrack
             || Mathf.Abs(RaceTrack.Shared.LateralOffset(position)) <= RaceTrack.RoadHalfWidth + 0.016f;
         var targetSpeed = drive * MaxSpeed * speedMultiplier * (onRoad ? 1f : 0.58f);
@@ -1263,7 +1611,7 @@ public sealed class ARDemoController : MonoBehaviour
         else if (Mathf.Abs(speed) > 0.01f && Mathf.Sign(targetSpeed) != Mathf.Sign(speed))
             rate = Braking;
         else
-            rate = Acceleration;
+            rate = Acceleration * Mathf.Max(1f, speedMultiplier * 0.8f);
         speed = Mathf.MoveTowards(speed, targetSpeed, rate * dt);
 
         // Only settle to a stop when coasting; a tiny speed under throttle is the car pulling away.
@@ -1273,18 +1621,23 @@ public sealed class ARDemoController : MonoBehaviour
             return;
         }
 
-        // Steering authority grows with speed and flips when reversing, like a real car.
+        // Steering authority grows with speed and flips when reversing, like a real car; at high
+        // speed the turn rate eases off so the car does not spin on the spot.
         var steerAuthority = Mathf.Clamp01(Mathf.Abs(speed) / FullSteerSpeed) * Mathf.Sign(speed);
-        heading += steer * TurnSpeed * steerAuthority * dt;
+        var highSpeedEase = Mathf.Lerp(1f, 0.72f, Mathf.Clamp01((Mathf.Abs(speed) - MaxSpeed) / MaxSpeed));
+        heading += steer * TurnSpeed * steerAuthority * highSpeedEase * dt;
         position += HeadingToForward(heading) * (speed * dt);
         if (onTrack && RaceTrack.Shared.ConstrainToRails(ref position, ProceduralCarFactory.CarHalfWidth))
         {
-            // Scrape along the guard rail, but keep enough speed to steer back onto the road.
+            // Scrape along the barrier, but keep enough speed to steer back onto the road.
             var scrapeSpeed = Mathf.Sign(speed) * Mathf.Min(Mathf.Abs(speed), MaxSpeed * 0.4f);
             speed = Mathf.MoveTowards(speed, scrapeSpeed, 2.5f * dt);
         }
 
-        position = ClampInsideArena(position, heading);
+        var clamped = ClampInsideArena(position, heading);
+        if ((clamped - position).sqrMagnitude > 0.0000001f && _mode == GameMode.Free)
+            speed *= Mathf.Exp(-8f * dt); // the edge of the mapped area / the room wall
+        position = clamped;
     }
 
     private void ApplyCarTransform()
@@ -1295,20 +1648,12 @@ public sealed class ARDemoController : MonoBehaviour
         _car.localRotation = Quaternion.Euler(0f, _carHeading, 0f) * Quaternion.Euler(_playerFall * 70f, 0f, 0f);
     }
 
-    private static Vector2 HeadingToForward(float headingDegrees)
-    {
-        var radians = headingDegrees * Mathf.Deg2Rad;
-        return new Vector2(Mathf.Sin(radians), Mathf.Cos(radians));
-    }
+    private static Vector2 HeadingToForward(float headingDegrees) => CarCollision.Forward(headingDegrees);
 
-    private static Vector2 HeadingToRight(float headingDegrees)
-    {
-        var radians = headingDegrees * Mathf.Deg2Rad;
-        return new Vector2(Mathf.Cos(radians), -Mathf.Sin(radians));
-    }
+    private static Vector2 HeadingToRight(float headingDegrees) => CarCollision.Right(headingDegrees);
 
-    /// <summary>Keeps the whole rotated car body inside the boundary lines.</summary>
-    private static Vector2 ClampInsideArena(Vector2 position, float heading)
+    /// <summary>Keeps the whole rotated car body inside the current bounds.</summary>
+    private Vector2 ClampInsideArena(Vector2 position, float heading)
     {
         var forward = HeadingToForward(heading);
         var right = HeadingToRight(heading);
@@ -1316,58 +1661,10 @@ public sealed class ARDemoController : MonoBehaviour
             + ProceduralCarFactory.CarHalfLength * Mathf.Abs(forward.x);
         var extentZ = ProceduralCarFactory.CarHalfWidth * Mathf.Abs(right.y)
             + ProceduralCarFactory.CarHalfLength * Mathf.Abs(forward.y);
-        const float limit = HalfArena - 0.012f;
-        position.x = Mathf.Clamp(position.x, -limit + extentX, limit - extentX);
-        position.y = Mathf.Clamp(position.y, -limit + extentZ, limit - extentZ);
+        const float inset = 0.012f;
+        position.x = Mathf.Clamp(position.x, _bounds.xMin + inset + extentX, _bounds.xMax - inset - extentX);
+        position.y = Mathf.Clamp(position.y, _bounds.yMin + inset + extentZ, _bounds.yMax - inset - extentZ);
         return position;
-    }
-
-    private bool IsBlocked(Vector2 position, float heading, Vector2 travelDirection)
-    {
-        if (OverlapsVirtualObstacle(position, heading))
-            return true;
-
-        var localPosition = new Vector3(position.x, 0f, position.y);
-        var localTravel = new Vector3(travelDirection.x, 0f, travelDirection.y);
-        if (IsBlockedByDetectedVerticalSurface(localPosition, localTravel))
-            return true;
-
-        return _depthDetector != null
-            && _depthDetector.IsPathBlocked(_arena.TransformPoint(localPosition),
-                _arena.TransformDirection(localTravel), ProceduralCarFactory.CarHalfLength + 0.03f, ProceduralCarFactory.CarHalfWidth + 0.01f);
-    }
-
-    /// <summary>Separating-axis test between the car's oriented box and each square barrier.</summary>
-    private bool OverlapsVirtualObstacle(Vector2 carCenter, float heading)
-    {
-        var forward = HeadingToForward(heading);
-        var right = HeadingToRight(heading);
-        const float halfWidth = ProceduralCarFactory.CarHalfWidth;
-        const float halfLength = ProceduralCarFactory.CarHalfLength;
-        const float box = ProceduralCarFactory.ObstacleHalfSize;
-
-        for (var i = 0; i < _obstaclePositions.Count; i++)
-        {
-            var delta = _obstaclePositions[i] - carCenter;
-            if (delta.sqrMagnitude > 0.16f) continue; // farther than any possible contact
-
-            if (Separated(delta, Vector2.right, halfWidth, halfLength, right, forward, box)) continue;
-            if (Separated(delta, Vector2.up, halfWidth, halfLength, right, forward, box)) continue;
-            if (Separated(delta, right, halfWidth, halfLength, right, forward, box)) continue;
-            if (Separated(delta, forward, halfWidth, halfLength, right, forward, box)) continue;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool Separated(Vector2 delta, Vector2 axis, float halfWidth, float halfLength,
-        Vector2 right, Vector2 forward, float boxHalf)
-    {
-        var carRadius = halfWidth * Mathf.Abs(Vector2.Dot(right, axis))
-            + halfLength * Mathf.Abs(Vector2.Dot(forward, axis));
-        var boxRadius = boxHalf * (Mathf.Abs(axis.x) + Mathf.Abs(axis.y));
-        return Mathf.Abs(Vector2.Dot(delta, axis)) > carRadius + boxRadius;
     }
 
     private bool IsBlockedByDetectedVerticalSurface(Vector3 candidateCarPosition, Vector3 localTravelDirection)
@@ -1385,12 +1682,12 @@ public sealed class ARDemoController : MonoBehaviour
                 continue;
 
             var planeLocal = plane.transform.InverseTransformPoint(probeWorld);
-            // ARPlane boundaries lie in the plane's local XY plane; local Z is
-            // distance from the detected vertical surface.
-            if (Mathf.Abs(planeLocal.z) > 0.12f)
+            // ARPlane boundaries lie in the plane's local XZ plane; local Y (the plane normal) is
+            // the distance from the detected vertical surface.
+            if (Mathf.Abs(planeLocal.y) > 0.03f)
                 continue;
 
-            if (IsPointInsidePlaneBoundary(plane, new Vector2(planeLocal.x, planeLocal.y)))
+            if (IsPointInsidePlaneBoundary(plane, new Vector2(planeLocal.x, planeLocal.z)))
                 return true;
         }
 
@@ -1520,7 +1817,11 @@ public sealed class ARDemoController : MonoBehaviour
         _depthDetector?.SetArena(null);
         _coins.Clear();
         _coinRespawnAt.Clear();
-        _obstaclePositions.Clear();
+        // Placed obstacles lived under the old play area, which is gone now.
+        _placed.Clear();
+        _placedObjects.Clear();
+        _placedRoot = null;
+        _buildMode = false;
         _score = 0;
         _speed = 0f;
         _steerInput = 0f;
@@ -1541,6 +1842,10 @@ public sealed class ARDemoController : MonoBehaviour
         _leftHeld = _rightHeld = _goHeld = _backHeld = false;
         var action = ControlAction.None;
         var roundOver = _state == GameState.Finished;
+        var freeTouches = 0;
+        var freeA = Vector2.zero;
+        var freeB = Vector2.zero;
+        var freeDelta = Vector2.zero;
 
         for (var i = 0; i < Input.touchCount; i++)
         {
@@ -1549,12 +1854,28 @@ public sealed class ARDemoController : MonoBehaviour
                 continue;
 
             var point = ToGuiPoint(touch.position);
+            var onControl = IsOnControl(point, roundOver);
             if (touch.phase == TouchPhase.Began)
             {
                 action = ClassifyTap(point, roundOver, action);
+                if (!onControl && _buildMode && !_hudRect.Contains(point)) HandleBuildTap(touch.position);
             }
 
-            if (!roundOver) ApplyHeldPoint(point);
+            if (!roundOver && !_buildMode) ApplyHeldPoint(point);
+            if (onControl || _hudRect.Contains(point)) continue;
+
+            // Fingers on empty screen turn and zoom the virtual-room view.
+            if (freeTouches == 0)
+            {
+                freeA = touch.position;
+                freeDelta = touch.phase == TouchPhase.Moved ? touch.deltaPosition : Vector2.zero;
+            }
+            else if (freeTouches == 1)
+            {
+                freeB = touch.position;
+            }
+
+            freeTouches++;
         }
 
 #if UNITY_EDITOR
@@ -1562,11 +1883,13 @@ public sealed class ARDemoController : MonoBehaviour
         if (Input.GetMouseButtonDown(0))
         {
             action = ClassifyTap(mousePoint, roundOver, action);
+            if (!IsOnControl(mousePoint, roundOver) && _buildMode && !_hudRect.Contains(mousePoint))
+                HandleBuildTap(Input.mousePosition);
         }
 
         if (!roundOver)
         {
-            if (Input.GetMouseButton(0)) ApplyHeldPoint(mousePoint);
+            if (Input.GetMouseButton(0) && !_buildMode) ApplyHeldPoint(mousePoint);
             var keySteer = Input.GetAxisRaw("Horizontal");
             var keyDrive = Input.GetAxisRaw("Vertical");
             if (keySteer < -0.1f) _leftHeld = true;
@@ -1580,24 +1903,73 @@ public sealed class ARDemoController : MonoBehaviour
         }
 #endif
 
+        UpdateLookGestures(freeTouches, freeA, freeB, freeDelta);
         _steerInput = (_rightHeld ? 1f : 0f) - (_leftHeld ? 1f : 0f);
         _driveInput = _goHeld == _backHeld ? 0f : _goHeld ? 1f : ReverseInput;
         return action;
     }
 
-    // The mode can be switched on the starting grid or after a finish, never mid-race.
-    private bool CanChangeMode() => !IsClient && (_state == GameState.Ready || _state == GameState.Finished);
+    /// <summary>One finger drags the view around; two fingers pinch to zoom (virtual room, phone camera).</summary>
+    private void UpdateLookGestures(int count, Vector2 a, Vector2 b, Vector2 delta)
+    {
+        if (count < 2) _pinchDistance = 0f;
+        if (_phoneView == null || _chaseCamera || _buildMode) return;
 
-    private bool ShowPlayersButton() => _net != null || CanChangeMode();
+        if (count >= 2)
+        {
+            var distance = (a - b).magnitude;
+            if (_pinchDistance > 0f && distance > 1f)
+                _phoneView.FieldOfView = Mathf.Clamp(_phoneView.FieldOfView * (_pinchDistance / distance), 18f, 70f);
+            _pinchDistance = distance;
+            return;
+        }
+
+        if (count == 1 && delta.sqrMagnitude > 0f)
+        {
+            var degreesPerPixel = _phoneView.FieldOfView / Mathf.Max(1f, Screen.height);
+            _phoneView.Drag(-delta * degreesPerPixel);
+        }
+    }
+
+    private bool IsOnControl(Vector2 point, bool roundOver)
+    {
+        if (ClassifyTap(point, roundOver, ControlAction.None) != ControlAction.None) return true;
+        if (roundOver || _buildMode) return false;
+        return Expand(_leftRect).Contains(point) || Expand(_rightRect).Contains(point)
+            || Expand(_goRect).Contains(point) || Expand(_backRect).Contains(point);
+    }
+
+    // FREE drive can switch any time; races only on the grid or after a finish.
+    private bool CanChangeMode() => !IsClient && !_buildMode
+        && (_mode == GameMode.Free || _state == GameState.Ready || _state == GameState.Finished);
+
+    private bool ShowPlayersButton() => !_buildMode && (_net != null || CanChangeMode());
+    private bool ShowCameraButtons() => _virtualMode && !_buildMode;
+    private bool ShowScanButton() => !_virtualMode && _depthDetector != null && _depthDetector.DepthSupported && !_buildMode;
+    private bool ShowBuildButton() => _mode == GameMode.Free && _net == null;
 
     private ControlAction ClassifyTap(Vector2 point, bool roundOver, ControlAction current)
     {
+        if (_buildMode)
+        {
+            if (Expand(_buildRect).Contains(point)) return ControlAction.Build;
+            if (Expand(_coneRect).Contains(point)) return ControlAction.PlaceCone;
+            if (Expand(_tyresRect).Contains(point)) return ControlAction.PlaceTyres;
+            if (Expand(_wallRect).Contains(point)) return ControlAction.PlaceWall;
+            if (Expand(_clearRect).Contains(point)) return ControlAction.ClearObstacles;
+            return current;
+        }
+
         if (_resetRect.Contains(point)) return ControlAction.Reset;
         if (_mpPanelOpen && Expand(_hostRect).Contains(point)) return ControlAction.Host;
         if (_mpPanelOpen && Expand(_joinRect).Contains(point)) return ControlAction.Join;
         if (ShowPlayersButton() && _mpRect.Contains(point)) return ControlAction.Players;
         if (roundOver && !IsClient && Expand(_againRect).Contains(point)) return ControlAction.Again;
         if (CanChangeMode() && _modeRect.Contains(point)) return ControlAction.Mode;
+        if (ShowCameraButtons() && _cameraRect.Contains(point)) return ControlAction.Camera;
+        if (ShowCameraButtons() && !_chaseCamera && _spotRect.Contains(point)) return ControlAction.Spot;
+        if (ShowScanButton() && _scanRect.Contains(point)) return ControlAction.Scan;
+        if (ShowBuildButton() && _buildRect.Contains(point)) return ControlAction.Build;
         return current;
     }
 
@@ -1658,6 +2030,38 @@ public sealed class ARDemoController : MonoBehaviour
         var againWidth = 190f * s;
         var againHeight = 70f * s;
         _againRect = new Rect((Screen.width - againWidth) * 0.5f, y - againHeight - 70f * s, againWidth, againHeight);
+
+        // Tool column under the HUD on the left: view buttons, depth scan, build.
+        var toolWidth = 96f * s;
+        var toolHeight = 38f * s;
+        var toolY = _hudRect.yMax + 8f * s;
+        var hidden = new Rect(-1000f, -1000f, 0f, 0f);
+        _cameraRect = _spotRect = _scanRect = hidden;
+        if (ShowCameraButtons())
+        {
+            _cameraRect = new Rect(margin, toolY, toolWidth, toolHeight);
+            toolY += toolHeight + 6f * s;
+            if (!_chaseCamera)
+            {
+                _spotRect = new Rect(margin, toolY, toolWidth, toolHeight);
+                toolY += toolHeight + 6f * s;
+            }
+        }
+
+        if (ShowScanButton())
+        {
+            _scanRect = new Rect(margin, toolY, toolWidth, toolHeight);
+            toolY += toolHeight + 6f * s;
+        }
+
+        _buildRect = ShowBuildButton() ? new Rect(margin, toolY, toolWidth, toolHeight) : hidden;
+
+        // Build palette replaces the driving buttons.
+        var paletteWidth = (Screen.width - margin * 2f - gap * 3f) / 4f;
+        _coneRect = new Rect(margin, y, paletteWidth, buttonHeight);
+        _tyresRect = new Rect(margin + (paletteWidth + gap), y, paletteWidth, buttonHeight);
+        _wallRect = new Rect(margin + (paletteWidth + gap) * 2f, y, paletteWidth, buttonHeight);
+        _clearRect = new Rect(margin + (paletteWidth + gap) * 3f, y, paletteWidth, buttonHeight);
     }
 
     // ---------------------------------------------------------------- HUD
@@ -1680,7 +2084,13 @@ public sealed class ARDemoController : MonoBehaviour
         GUI.contentColor = Color.white;
 
         var title = "AR COIN DRIVE";
-        if (_arena != null && _mode == GameMode.Battle)
+        if (_arena != null && _mode == GameMode.Free)
+        {
+            // Speed shown as the full-size equivalent of a 1:18 RC car.
+            var scaleSpeed = Mathf.RoundToInt(Mathf.Abs(_speed) * 3.6f * RcScale);
+            title = "FREE DRIVE  •  COINS " + _score + "  •  " + scaleSpeed + " km/h";
+        }
+        else if (_arena != null && _mode == GameMode.Battle)
         {
             title = "BATTLE  •  YOU " + _playerWins + " : " + _rivalWins + " RIVAL  •  RING "
                 + Mathf.RoundToInt(_battleRadius * 200f) + " cm";
@@ -1708,12 +2118,15 @@ public sealed class ARDemoController : MonoBehaviour
         var anchorState = _anchor == null ? "none" : _anchor.trackingState.ToString();
         var trackingStatus = "AR: " + ARSession.state + " (" + ARSession.notTrackingReason
             + ")  •  camera frames: " + _cameraFrameCount;
+        if (_depthDetector != null && _depthDetector.HasDepthFrame)
+            depthState += ", " + _depthDetector.SolidCellCount + " obstacle cells";
         var featureStatus = "Planes: " + planeCount + "  •  anchor: " + anchorState
             + "  •  depth: " + depthState;
         if (_virtualMode)
         {
-            trackingStatus = "Mode: virtual table (no AR)";
-            featureStatus = "RESET starts a new layout";
+            trackingStatus = "Mode: virtual room (no AR)  •  "
+                + (_chaseCamera ? "chase camera" : _phoneView != null && _phoneView.HasGyro ? "gyroscope camera" : "auto camera");
+            featureStatus = "Drag the screen to look around, pinch to zoom  •  RESET restarts";
         }
 
         if (_net != null)
@@ -1750,6 +2163,31 @@ public sealed class ARDemoController : MonoBehaviour
             GUI.contentColor = Color.white;
         }
 
+        var toolColor = new Color(0.12f, 0.18f, 0.23f, 0.88f);
+        var activeColor = new Color(0.95f, 0.55f, 0.10f, 0.94f);
+        if (ShowCameraButtons())
+        {
+            DrawControl(_cameraRect, _chaseCamera ? "CAM: CHASE" : "CAM: PHONE", toolColor, false, _smallButtonStyle);
+            if (!_chaseCamera && _phoneView != null)
+                DrawControl(_spotRect, "MOVE: " + _phoneView.SpotName, toolColor, false, _smallButtonStyle);
+        }
+
+        if (ShowScanButton())
+            DrawControl(_scanRect, _depthDetector.ShowOverlay ? "SCAN: ON" : "SCAN: OFF", toolColor, false, _smallButtonStyle);
+        if (ShowBuildButton())
+            DrawControl(_buildRect, _buildMode ? "DONE" : "BUILD", _buildMode ? activeColor : toolColor, false, _smallButtonStyle);
+
+        if (_buildMode)
+        {
+            DrawControl(_coneRect, "CONE", _buildKind == ObstacleKind.Cone ? activeColor : toolColor, false, _smallButtonStyle);
+            DrawControl(_tyresRect, "TYRES", _buildKind == ObstacleKind.Tyres ? activeColor : toolColor, false, _smallButtonStyle);
+            DrawControl(_wallRect, "WALL", _buildKind == ObstacleKind.Wall ? activeColor : toolColor, false, _smallButtonStyle);
+            DrawControl(_clearRect, "CLEAR", new Color(0.55f, 0.12f, 0.10f, 0.9f), false, _smallButtonStyle);
+            GUI.color = previousGuiColor;
+            GUI.contentColor = previousContentColor;
+            return;
+        }
+
         if (_state == GameState.Finished)
         {
             var againColor = _finishPlace == 1
@@ -1766,11 +2204,11 @@ public sealed class ARDemoController : MonoBehaviour
             DrawControl(_backRect, "BACK", new Color(0.86f, 0.48f, 0.12f, 0.94f), _backHeld, _buttonStyle);
         }
 
-        DrawControl(_resetRect, "RESET", new Color(0.12f, 0.18f, 0.23f, 0.88f), false, _smallButtonStyle);
+        DrawControl(_resetRect, "RESET", toolColor, false, _smallButtonStyle);
         if (CanChangeMode())
         {
-            DrawControl(_modeRect, battle ? "MODE: BATTLE  ⇄" : "MODE: RACE  ⇄",
-                new Color(0.42f, 0.20f, 0.70f, 0.92f), false, _smallButtonStyle);
+            var modeLabel = _mode == GameMode.Free ? "MODE: FREE  ⇄" : battle ? "MODE: BATTLE  ⇄" : "MODE: RACE  ⇄";
+            DrawControl(_modeRect, modeLabel, new Color(0.42f, 0.20f, 0.70f, 0.92f), false, _smallButtonStyle);
         }
 
         if (ShowPlayersButton())

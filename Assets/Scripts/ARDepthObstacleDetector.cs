@@ -6,31 +6,68 @@ using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
 /// <summary>
-/// Samples supported AR environment-depth frames and keeps nearby real-world points
-/// above the play surface. This is a conservative proximity guard, not full scene
-/// reconstruction or semantic object recognition.
+/// Builds a floor map of real obstacles from AR environment depth, so the virtual car bumps
+/// into shoes, furniture and walls like a real RC car.
+///
+/// The play surface is split into 4 cm cells. Each depth frame votes per cell: points between
+/// 3.5 cm and 35 cm above the floor (car height) mark the cell solid, points lying on the
+/// floor clear it again, and a drop of more than 8 cm (a table edge) also counts as solid.
+/// A cell needs votes from two frames before it blocks, which filters single noisy readings.
+/// The map persists while the phone looks elsewhere, so obstacles stay solid when out of view.
+/// Depth is geometric only (no object recognition) and depends on the device.
 /// </summary>
 public sealed class ARDepthObstacleDetector : MonoBehaviour
 {
-    private const int PixelStep = 4;
-    private const int MaximumPoints = 2500;
-    private const float SampleInterval = 0.25f;
-    // Points closer than this to the placed plane are treated as floor / depth noise.
-    private const float MinimumHeight = 0.06f;
-    // A single stray depth sample must not stop the car; require a small cluster.
-    private const int MinimumBlockingPoints = 4;
-    private const float MaximumHeight = 0.32f;
-    private const float MaximumDepth = 4f;
+    public const float CellSize = 0.04f;
+    public const float HalfExtent = 3f;
+    private const int Cells = (int)(HalfExtent * 2f / CellSize);
+
+    private const float SampleInterval = 0.12f;
+    private const int PixelStep = 2;
+    private const float MaximumDepth = 3.6f;
+    private const float ObstacleMinHeight = 0.035f;
+    private const float ObstacleMaxHeight = 0.35f;
+    private const float FloorBand = 0.015f;
+    private const float CliffDepth = -0.08f;
+    private const float SolidThreshold = 2f;
+    private const float MaxEvidence = 6f;
+    private const byte MinimumConfidence = 90;
 
     private AROcclusionManager _occlusionManager;
     private ARCameraManager _cameraManager;
     private Camera _camera;
     private Transform _arena;
-    private readonly List<Vector3> _obstaclePoints = new List<Vector3>();
     private float _nextSampleTime;
+
+    private readonly float[] _evidence = new float[Cells * Cells];
+    private readonly ushort[] _frameHits = new ushort[Cells * Cells];
+    private readonly ushort[] _frameFloor = new ushort[Cells * Cells];
+    private readonly List<int> _touched = new List<int>(4096);
+    private int _solidCount;
+
+    private bool _showOverlay = true;
+    private GameObject _overlayObject;
+    private Mesh _overlayMesh;
+    private Material _overlayMaterial;
+    private bool _overlayDirty;
+    private readonly List<Vector3> _overlayVertices = new List<Vector3>();
+    private readonly List<Color32> _overlayColors = new List<Color32>();
+    private readonly List<int> _overlayTriangles = new List<int>();
 
     public bool DepthSupported { get; private set; }
     public bool HasDepthFrame { get; private set; }
+    public int SolidCellCount => _solidCount;
+
+    public bool ShowOverlay
+    {
+        get => _showOverlay;
+        set
+        {
+            _showOverlay = value;
+            _overlayDirty = true;
+            if (_overlayObject != null) _overlayObject.SetActive(value);
+        }
+    }
 
     private void Awake()
     {
@@ -42,66 +79,107 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
     public void SetArena(Transform arena)
     {
         _arena = arena;
-        _obstaclePoints.Clear();
+        Array.Clear(_evidence, 0, _evidence.Length);
+        _solidCount = 0;
         HasDepthFrame = false;
+        if (_overlayObject != null) Destroy(_overlayObject);
+        _overlayObject = null;
+        _overlayDirty = true;
     }
 
     private void Update()
     {
         RefreshDepthSupport();
-        if (_arena == null || !DepthSupported || Time.unscaledTime < _nextSampleTime)
-            return;
+        if (_arena == null || !DepthSupported) return;
 
-        _nextSampleTime = Time.unscaledTime + SampleInterval;
-        SampleEnvironmentDepth();
+        if (Time.unscaledTime >= _nextSampleTime)
+        {
+            _nextSampleTime = Time.unscaledTime + SampleInterval;
+            SampleEnvironmentDepth();
+        }
+
+        if (_overlayDirty && _showOverlay) RebuildOverlay();
     }
 
     private void RefreshDepthSupport()
     {
         var descriptor = _occlusionManager != null ? _occlusionManager.descriptor : null;
-        DepthSupported = descriptor != null
+        DepthSupported = _occlusionManager != null && _occlusionManager.enabled && descriptor != null
             && descriptor.environmentDepthImageSupported == Supported.Supported;
-
-        if (!DepthSupported)
-        {
-            HasDepthFrame = false;
-            _obstaclePoints.Clear();
-        }
+        if (!DepthSupported) HasDepthFrame = false;
     }
 
-    public bool IsPathBlocked(Vector3 carWorldPosition, Vector3 worldForward, float lookAhead, float radius)
+    // ------------------------------------------------------------------ queries
+
+    public bool IsSolid(Vector2 local)
     {
-        if (!HasDepthFrame || _arena == null || _obstaclePoints.Count == 0)
-            return false;
+        var index = CellIndex(local.x, local.y);
+        return index >= 0 && _evidence[index] >= SolidThreshold;
+    }
 
-        var forward = Vector3.ProjectOnPlane(worldForward, _arena.up).normalized;
-        if (forward.sqrMagnitude < 0.001f)
-            return false;
+    /// <summary>
+    /// Solid cells under the car's rectangle. The normal points from the touched cells toward
+    /// the car centre; depth is a conservative push-out distance.
+    /// </summary>
+    public bool Overlap(Vector2 carCenter, float heading, float halfWidth, float halfLength,
+        out Vector2 normal, out float depth)
+    {
+        normal = Vector2.zero;
+        depth = 0f;
+        if (_arena == null || _solidCount == 0) return false;
 
-        var pathStart = carWorldPosition + _arena.up * 0.075f;
-        var pathLength = lookAhead + 0.20f;
-        var radiusSquared = radius * radius;
+        var forward = CarCollision.Forward(heading);
+        var right = CarCollision.Right(heading);
+        var reach = Mathf.Sqrt(halfWidth * halfWidth + halfLength * halfLength) + CellSize;
+        var minX = ToCell(carCenter.x - reach);
+        var maxX = ToCell(carCenter.x + reach);
+        var minZ = ToCell(carCenter.y - reach);
+        var maxZ = ToCell(carCenter.y + reach);
+        var inflate = CellSize * 0.5f;
         var hits = 0;
+        var push = Vector2.zero;
+        var deepest = 0f;
 
-        for (var i = 0; i < _obstaclePoints.Count; i++)
+        for (var z = Mathf.Max(0, minZ); z <= Mathf.Min(Cells - 1, maxZ); z++)
         {
-            var delta = _obstaclePoints[i] - pathStart;
-            var verticalDistance = Mathf.Abs(Vector3.Dot(delta, _arena.up));
-            if (verticalDistance > 0.16f)
-                continue;
+            for (var x = Mathf.Max(0, minX); x <= Mathf.Min(Cells - 1, maxX); x++)
+            {
+                if (_evidence[z * Cells + x] < SolidThreshold) continue;
+                var cell = CellCenter(x, z);
+                var delta = cell - carCenter;
+                var alongRight = Vector2.Dot(delta, right);
+                var alongForward = Vector2.Dot(delta, forward);
+                var penetrationSide = halfWidth + inflate - Mathf.Abs(alongRight);
+                var penetrationEnd = halfLength + inflate - Mathf.Abs(alongForward);
+                if (penetrationSide <= 0f || penetrationEnd <= 0f) continue;
 
-            var horizontalDelta = Vector3.ProjectOnPlane(delta, _arena.up);
-            var alongPath = Vector3.Dot(horizontalDelta, forward);
-            if (alongPath < 0f || alongPath > pathLength)
-                continue;
-
-            var lateralDelta = horizontalDelta - forward * alongPath;
-            if (lateralDelta.sqrMagnitude <= radiusSquared && ++hits >= MinimumBlockingPoints)
-                return true;
+                hits++;
+                var away = -delta;
+                push += away.sqrMagnitude > 0.000001f ? away.normalized : -forward;
+                deepest = Mathf.Max(deepest, Mathf.Min(penetrationSide, penetrationEnd));
+            }
         }
 
-        return false;
+        if (hits == 0) return false;
+        normal = push.sqrMagnitude > 0.000001f ? push.normalized : -forward;
+        depth = Mathf.Min(deepest, CellSize * 1.5f);
+        return true;
     }
+
+    private static int ToCell(float coordinate) => Mathf.FloorToInt((coordinate + HalfExtent) / CellSize);
+
+    private static int CellIndex(float x, float z)
+    {
+        var cx = ToCell(x);
+        var cz = ToCell(z);
+        if (cx < 0 || cz < 0 || cx >= Cells || cz >= Cells) return -1;
+        return cz * Cells + cx;
+    }
+
+    private static Vector2 CellCenter(int x, int z) =>
+        new Vector2((x + 0.5f) * CellSize - HalfExtent, (z + 0.5f) * CellSize - HalfExtent);
+
+    // ------------------------------------------------------------------ sampling
 
     private void SampleEnvironmentDepth()
     {
@@ -110,88 +188,151 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
             || !_occlusionManager.TryAcquireEnvironmentDepthCpuImage(out var image))
         {
             HasDepthFrame = false;
-            _obstaclePoints.Clear();
             return;
+        }
+
+        XRCpuImage confidence = default;
+        var hasConfidence = false;
+        try
+        {
+            hasConfidence = _occlusionManager.TryAcquireEnvironmentDepthConfidenceCpuImage(out confidence);
+        }
+        catch (Exception)
+        {
+            hasConfidence = false;
         }
 
         using (image)
         {
-            if (image.planeCount < 1 || intrinsics.resolution.x <= 0 || intrinsics.resolution.y <= 0)
+            try
             {
-                HasDepthFrame = false;
-                _obstaclePoints.Clear();
-                return;
+                Integrate(image, intrinsics, hasConfidence ? confidence : default, hasConfidence);
             }
-
-            var plane = image.GetPlane(0);
-            var bytes = plane.data;
-            var scaleX = image.width / (float)intrinsics.resolution.x;
-            var scaleY = image.height / (float)intrinsics.resolution.y;
-            var focalX = intrinsics.focalLength.x * scaleX;
-            var focalY = intrinsics.focalLength.y * scaleY;
-            var principalX = intrinsics.principalPoint.x * scaleX;
-            var principalY = intrinsics.principalPoint.y * scaleY;
-
-            if (focalX <= 0f || focalY <= 0f)
+            finally
             {
-                HasDepthFrame = false;
-                _obstaclePoints.Clear();
-                return;
+                if (hasConfidence) confidence.Dispose();
             }
+        }
+    }
 
-            _obstaclePoints.Clear();
-            var orientation = Screen.orientation;
-            for (var y = PixelStep / 2; y < image.height; y += PixelStep)
+    private void Integrate(XRCpuImage image, XRCameraIntrinsics intrinsics, XRCpuImage confidence, bool hasConfidence)
+    {
+        if (image.planeCount < 1 || intrinsics.resolution.x <= 0 || intrinsics.resolution.y <= 0) return;
+
+        var plane = image.GetPlane(0);
+        var bytes = plane.data;
+        var scaleX = image.width / (float)intrinsics.resolution.x;
+        var scaleY = image.height / (float)intrinsics.resolution.y;
+        var focalX = intrinsics.focalLength.x * scaleX;
+        var focalY = intrinsics.focalLength.y * scaleY;
+        var principalX = intrinsics.principalPoint.x * scaleX;
+        var principalY = intrinsics.principalPoint.y * scaleY;
+        if (focalX <= 0f || focalY <= 0f) return;
+
+        var confidenceBytes = default(NativeArray<byte>);
+        var confidenceStride = 0;
+        var confidenceScaleX = 1f;
+        var confidenceScaleY = 1f;
+        if (hasConfidence && confidence.planeCount > 0 && confidence.format == XRCpuImage.Format.OneComponent8)
+        {
+            var confidencePlane = confidence.GetPlane(0);
+            confidenceBytes = confidencePlane.data;
+            confidenceStride = confidencePlane.rowStride;
+            confidenceScaleX = confidence.width / (float)image.width;
+            confidenceScaleY = confidence.height / (float)image.height;
+        }
+        else
+        {
+            hasConfidence = false;
+        }
+
+        // Camera space (as the display sees it) straight into play-area space.
+        var cameraToArena = _arena.worldToLocalMatrix * _camera.transform.localToWorldMatrix;
+        var orientation = Screen.orientation;
+        _touched.Clear();
+
+        for (var y = PixelStep / 2; y < image.height; y += PixelStep)
+        {
+            for (var x = PixelStep / 2; x < image.width; x += PixelStep)
             {
-                for (var x = PixelStep / 2; x < image.width; x += PixelStep)
+                if (hasConfidence)
                 {
-                    var depth = ReadDepthMeters(image.format, bytes, plane.rowStride, plane.pixelStride, x, y);
-                    if (depth < 0.12f || depth > MaximumDepth)
-                        continue;
-
-                    // Depth values are camera-space Z; intrinsics convert pixels to a camera ray.
-                    var u = (x - principalX) * depth / focalX;
-                    var v = (y - principalY) * depth / focalY;
-                    var cameraPoint = SensorToDisplayCamera(u, v, depth, orientation);
-                    var worldPoint = _camera.transform.TransformPoint(cameraPoint);
-                    var arenaPoint = _arena.InverseTransformPoint(worldPoint);
-
-                    if (arenaPoint.x < -0.78f || arenaPoint.x > 0.78f
-                        || arenaPoint.z < -0.78f || arenaPoint.z > 0.78f
-                        || arenaPoint.y < MinimumHeight || arenaPoint.y > MaximumHeight)
-                        continue;
-
-                    _obstaclePoints.Add(worldPoint);
-                    if (_obstaclePoints.Count >= MaximumPoints)
-                        break;
+                    var ci = Mathf.FloorToInt(y * confidenceScaleY) * confidenceStride + Mathf.FloorToInt(x * confidenceScaleX);
+                    if (ci < 0 || ci >= confidenceBytes.Length || confidenceBytes[ci] < MinimumConfidence) continue;
                 }
 
-                if (_obstaclePoints.Count >= MaximumPoints)
-                    break;
+                var depth = ReadDepthMeters(image.format, bytes, plane.rowStride, plane.pixelStride, x, y);
+                if (depth < 0.15f || depth > MaximumDepth) continue;
+
+                var u = (x - principalX) * depth / focalX;
+                var v = (y - principalY) * depth / focalY;
+                var point = cameraToArena.MultiplyPoint3x4(SensorToDisplayCamera(u, v, depth, orientation));
+                var index = CellIndex(point.x, point.z);
+                if (index < 0) continue;
+
+                var height = point.y;
+                if (height >= ObstacleMinHeight && height <= ObstacleMaxHeight)
+                    Vote(_frameHits, index);
+                else if (height < CliffDepth && height > -1.5f)
+                    Vote(_frameHits, index);
+                else if (Mathf.Abs(height) <= FloorBand)
+                    Vote(_frameFloor, index);
+            }
+        }
+
+        var changed = false;
+        for (var i = 0; i < _touched.Count; i++)
+        {
+            var index = _touched[i];
+            var before = _evidence[index];
+            var after = before;
+            if (_frameHits[index] >= 2)
+                after = Mathf.Min(MaxEvidence, before + 1f);
+            else if (_frameFloor[index] >= 3 && _frameHits[index] == 0)
+                after = Mathf.Max(0f, before - 1.5f);
+
+            if (!Mathf.Approximately(before, after))
+            {
+                var wasSolid = before >= SolidThreshold;
+                var isSolid = after >= SolidThreshold;
+                if (wasSolid != isSolid)
+                {
+                    _solidCount += isSolid ? 1 : -1;
+                    changed = true;
+                }
+
+                _evidence[index] = after;
             }
 
-            HasDepthFrame = true;
+            _frameHits[index] = 0;
+            _frameFloor[index] = 0;
         }
+
+        HasDepthFrame = true;
+        if (changed) _overlayDirty = true;
+    }
+
+    private void Vote(ushort[] counts, int index)
+    {
+        if (_frameHits[index] == 0 && _frameFloor[index] == 0) _touched.Add(index);
+        if (counts[index] < ushort.MaxValue) counts[index]++;
     }
 
     /// <summary>
     /// CPU depth images and camera intrinsics are in the sensor's native landscape-left
     /// orientation (x right, y down), while the AR camera transform follows the display.
-    /// Rotate the sensor-space offsets (u along image x, v along image y) into the
-    /// display camera's frame (x right, y up, z forward) for the current orientation.
     /// </summary>
     private static Vector3 SensorToDisplayCamera(float u, float v, float depth, ScreenOrientation orientation)
     {
         switch (orientation)
         {
             case ScreenOrientation.Portrait:
-                // Image is shown rotated 90° clockwise: image +x points down, +y points left.
                 return new Vector3(-v, -u, depth);
             case ScreenOrientation.PortraitUpsideDown:
                 return new Vector3(v, u, depth);
             case ScreenOrientation.LandscapeRight:
                 return new Vector3(-u, v, depth);
-            default: // LandscapeLeft: sensor and display axes match.
+            default:
                 return new Vector3(u, -v, depth);
         }
     }
@@ -200,24 +341,81 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
         int rowStride, int pixelStride, int x, int y)
     {
         var index = y * rowStride + x * pixelStride;
-        if (index < 0 || index >= bytes.Length)
-            return 0f;
+        if (index < 0 || index >= bytes.Length) return 0f;
 
         if (format == XRCpuImage.Format.DepthUint16)
         {
             if (index + 1 >= bytes.Length) return 0f;
-            var millimeters = bytes[index] | (bytes[index + 1] << 8);
-            return millimeters * 0.001f;
+            return (bytes[index] | (bytes[index + 1] << 8)) * 0.001f;
         }
 
         if (format == XRCpuImage.Format.DepthFloat32)
         {
             if (index + 3 >= bytes.Length) return 0f;
-            var bits = bytes[index] | (bytes[index + 1] << 8)
-                | (bytes[index + 2] << 16) | (bytes[index + 3] << 24);
+            var bits = bytes[index] | (bytes[index + 1] << 8) | (bytes[index + 2] << 16) | (bytes[index + 3] << 24);
             return BitConverter.Int32BitsToSingle(bits);
         }
 
         return 0f;
+    }
+
+    // ------------------------------------------------------------------ overlay
+
+    /// <summary>Faint orange tiles on the floor where the car will bump: shows what depth sees.</summary>
+    private void RebuildOverlay()
+    {
+        _overlayDirty = false;
+        if (_arena == null) return;
+
+        if (_overlayObject == null)
+        {
+            var shader = Shader.Find("AR Coin Drive/Overlay");
+            if (shader == null) return;
+            if (_overlayMaterial == null)
+                _overlayMaterial = new Material(shader) { name = "Depth Scan Overlay" };
+            _overlayObject = new GameObject("Depth Scan Overlay");
+            _overlayObject.transform.SetParent(_arena, false);
+            _overlayMesh = new Mesh { name = "Depth Scan Overlay" };
+            _overlayMesh.MarkDynamic();
+            _overlayObject.AddComponent<MeshFilter>().sharedMesh = _overlayMesh;
+            var meshRenderer = _overlayObject.AddComponent<MeshRenderer>();
+            meshRenderer.sharedMaterial = _overlayMaterial;
+            meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            meshRenderer.receiveShadows = false;
+            _overlayObject.SetActive(_showOverlay);
+        }
+
+        _overlayVertices.Clear();
+        _overlayColors.Clear();
+        _overlayTriangles.Clear();
+        var half = CellSize * 0.42f;
+        var tint = new Color32(255, 120, 40, 90);
+        for (var z = 0; z < Cells && _overlayVertices.Count < 60000; z++)
+        {
+            for (var x = 0; x < Cells; x++)
+            {
+                if (_evidence[z * Cells + x] < SolidThreshold) continue;
+                var c = CellCenter(x, z);
+                var start = _overlayVertices.Count;
+                _overlayVertices.Add(new Vector3(c.x - half, 0.004f, c.y - half));
+                _overlayVertices.Add(new Vector3(c.x - half, 0.004f, c.y + half));
+                _overlayVertices.Add(new Vector3(c.x + half, 0.004f, c.y + half));
+                _overlayVertices.Add(new Vector3(c.x + half, 0.004f, c.y - half));
+                for (var k = 0; k < 4; k++) _overlayColors.Add(tint);
+                _overlayTriangles.Add(start);
+                _overlayTriangles.Add(start + 1);
+                _overlayTriangles.Add(start + 2);
+                _overlayTriangles.Add(start);
+                _overlayTriangles.Add(start + 2);
+                _overlayTriangles.Add(start + 3);
+            }
+        }
+
+        _overlayMesh.Clear();
+        _overlayMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        _overlayMesh.SetVertices(_overlayVertices);
+        _overlayMesh.SetColors(_overlayColors);
+        _overlayMesh.SetTriangles(_overlayTriangles, 0);
+        _overlayMesh.RecalculateBounds();
     }
 }

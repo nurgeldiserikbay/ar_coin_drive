@@ -5,13 +5,15 @@
 - [Transparent app icon foreground layer (PNG)](Branding/app-icon-foreground.png)
 - [Opaque app icon background layer (PNG)](Branding/app-icon-background.png)
 
-A small Unity AR toy-car game for Android. The player scans and taps a horizontal surface, a toy racetrack or battle ring is drawn on it (attached to an AR anchor), and the player races or battles a computer rival. Without AR the same game runs on a landscaped virtual island.
+A Unity AR RC-car game for Android. The player scans and taps the floor and drives a virtual RC buggy around the real room, as if filming a real radio-controlled car with the phone. Without AR the same game runs in a virtual living room.
 
 ## Modes
 
+- **Free drive (default):** the buggy roams the room. In AR, environment depth builds a floor map of real obstacles (shoes, furniture, walls, table edges) and the car bumps into them and slides along them; SCAN shows the mapped obstacles as orange tiles. BUILD places virtual cones, tyre stacks and wall blocks (tap the floor to place, tap one to remove). Coins around the room give a boost.
 - **Race:** five laps of a closed toy track against a rival car. Hold GO for a 3-2-1 countdown. Laps only count when driving forward, coins on the road give a short speed boost and respawn, cars bump each other, and the best finishing time is saved.
 - **Battle:** a round sumo ring that shrinks from 124 cm to 60 cm across during a round. Ram the rival to knock it out of the ring; harder hits send cars further. First to three knockouts wins the match.
-- Switch modes with the MODE button on the starting grid or after a finish.
+- Switch modes with the MODE button (any time in free drive; on the starting grid or after a finish in races).
+- **Without AR:** a living room with furniture the car collides with. CAM: PHONE turns the view with the phone's gyroscope as if filming from where you stand (accelerometer tilt and automatic panning on phones without a gyroscope); MOVE changes where you stand; drag to look around, pinch to zoom. CAM: CHASE follows behind the car.
 - **Two players, no server:** both phones join the same Wi-Fi, or one phone turns on its hotspot and the other connects to it. Each player places the track on their own floor (or uses the virtual island). One taps 2 PLAYERS > HOST, the other 2 PLAYERS > JOIN; the joining phone finds the host automatically by sweeping its local subnet over UDP port 47777. The host runs the game and picks the mode; the other phone sends its controls and shows the host's game from its own car. Works in both Race and Battle. If the link drops for 4 seconds, the host goes back to racing the computer.
 
 ## Included
@@ -19,8 +21,9 @@ A small Unity AR toy-car game for Android. The player scans and taps a horizonta
 - Unity 6 project scaffold with AR Foundation and ARCore XR packages pinned to 6.6.2.
 - Editor menu command that generates the AR session, camera rig, visible translucent plane mesh, horizontal and vertical plane detection, raycast and occlusion managers, and demo scene.
 - Optional environment-depth sampling that can stop the player's car near visible obstacles on supported devices.
-- Procedural models built in code: a glossy toy sports car with rolling and steering wheels and body roll (`ProceduralCarModel`, `ProceduralCarRig`), the race track with curbs, start grid and guard rails (`RaceTrack`), and the battle ring (`BattleArena`). No third-party models are required.
-- `Resources/ARCoinDriveToon.shader`: a mobile paint shader with wrapped light, a glossy clear coat and a procedural sky reflection; every procedural material uses it through `Resources/ARCoinDriveLit.mat`, so it ships in builds.
+- Procedural models built in code: a 1:18-style electric RC buggy with knobby tyres, coil-over shocks, arms, gearbox, motor, lexan shell, wing and antenna, whose shell rolls, pitches and rocks after impacts (`ProceduralCarModel`, `ProceduralCarRig`); an RC track with asphalt, curbs, astroturf run-off, foam-tube barriers and a start gantry (`RaceTrack`); the battle ring (`BattleArena`); placeable cones, tyre stacks and walls; the virtual living room (`VirtualRoom`). Textures are generated at start-up (`ProceduralTextures`). No third-party models are required.
+- `Resources/ARCoinDriveToon.shader` ("AR Coin Drive/Lit"): a mobile physically-inspired shader with real-time shadows, ambient from AR light estimation and Fresnel reflections; every procedural material uses it through `Resources/ARCoinDriveLit.mat`, so it ships in builds. `ARCoinDriveShadowCatcher.shader` lets virtual shadows fall on the real floor in AR.
+- `ARLightEstimation` matches the key light's direction, colour and brightness and the ambient light to the real room (ARCore Environmental HDR).
 - Multi-touch controls: hold a steering arrow and GO/BACK with two thumbs at once (WASD/arrow keys in the Editor).
 - Toy RC-car handling shared by the player and the rival: acceleration, braking, rolling friction, steering only while moving, slower on grass, and sliding along guard rails.
 
@@ -43,9 +46,9 @@ A small Unity AR toy-car game for Android. The player scans and taps a horizonta
 ## Current prototype limits
 
 - This is a playable AR foundation check, not a finished game.
-- The play boundary is virtual and fixed at 1.5 m square. The play area is attached to a plane anchor when the provider supports trackable attachments.
+- Race and battle use a 1.5 m square play area; free drive covers about 6 x 6 m around the tapped spot (the depth map size). The play area is attached to a plane anchor when the provider supports trackable attachments.
 - The prototype requests vertical plane detection and stops the car near some tracked flat vertical surfaces. This does not recognize every object or guarantee safe real-world collision avoidance.
-- On supported devices, environment-depth sampling provides an approximate proximity guard and environment occlusion for visible objects. It is geometric depth sampling, not AI object recognition or complete room reconstruction.
+- On supported devices, environment depth builds a 4 cm floor map of obstacles between 3.5 and 35 cm high (and drops such as table edges), plus environment occlusion. Obstacles must be seen in two depth frames to count, and seeing the floor again clears them, so moving objects update. The map only knows what the camera has seen. It is geometric depth sampling, not AI object recognition or complete room reconstruction.
 - Depth readings depend on device support, camera angle, tracking, and visibility. The app falls back to vertical-plane checks when depth is unavailable; both paths need real-phone testing.
 - The car and coins are procedural placeholder models intended to prove scale and interaction. Replace them with authored stylized assets during visual production.
 - The project has not been built or checked on a physical Android device in this environment.
