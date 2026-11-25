@@ -72,6 +72,12 @@ public static class ARCoinDriveSceneBuilder
         PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
         // Two-player mode talks over the local network.
         PlayerSettings.Android.forceInternetPermission = true;
+        // The game picks landscape, portrait or free rotation at runtime (Settings > Screen).
+        PlayerSettings.defaultInterfaceOrientation = UIOrientation.AutoRotation;
+        PlayerSettings.allowedAutorotateToLandscapeLeft = true;
+        PlayerSettings.allowedAutorotateToLandscapeRight = true;
+        PlayerSettings.allowedAutorotateToPortrait = true;
+        PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
         ARCoinDriveBranding.Apply();
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -92,6 +98,7 @@ public static class ARCoinDriveSceneBuilder
         // The toy car is ~30 cm long; the default 0.3 m near plane clips it when the phone gets close.
         camera.nearClipPlane = 0.05f;
         camera.farClipPlane = 30f;
+        cameraObject.AddComponent<AudioListener>();
         cameraObject.AddComponent<ARCameraManager>();
         cameraObject.AddComponent<ARCameraBackground>();
         var occlusion = cameraObject.AddComponent<AROcclusionManager>();

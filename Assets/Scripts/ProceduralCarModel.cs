@@ -117,8 +117,8 @@ public static class ProceduralCarModel
 
         // Chassis plate with raised side rails, front skid and bumpers.
         b.AddBox(Aluminium, new Vector3(0f, 0.022f, -0.005f), new Vector3(0.088f, 0.006f, 0.30f));
-        b.AddBox(Aluminium, new Vector3(0f, 0.028f, 0.152f), new Vector3(0.070f, 0.005f, 0.05f),
-            Matrix4x4.Rotate(Quaternion.Euler(-18f, 0f, 0f)));
+        b.AddBox(Aluminium, Vector3.zero, new Vector3(0.070f, 0.005f, 0.05f),
+            Matrix4x4.TRS(new Vector3(0f, 0.030f, 0.150f), Quaternion.Euler(-18f, 0f, 0f), Vector3.one));
         b.AddBox(Plastic, new Vector3(0f, 0.031f, 0.182f), new Vector3(0.100f, 0.012f, 0.010f));
         b.AddBox(Plastic, new Vector3(0f, 0.037f, 0.172f), new Vector3(0.066f, 0.006f, 0.016f));
         b.AddBox(Plastic, new Vector3(0f, 0.046f, -0.180f), new Vector3(0.096f, 0.022f, 0.014f));
@@ -232,8 +232,8 @@ public static class ProceduralCarModel
             b.AddEllipsoid(Accent, new Vector3(side * 0.0605f, 0.064f, -0.004f), new Vector3(0.0028f, 0.010f, 0.012f));
             // Wing endplates and struts.
             b.AddBox(Secondary, new Vector3(side * 0.088f, 0.132f, -0.170f), new Vector3(0.003f, 0.034f, 0.070f));
-            b.AddBox(Black, new Vector3(side * 0.028f, 0.106f, -0.150f), new Vector3(0.004f, 0.046f, 0.018f),
-                Matrix4x4.Rotate(Quaternion.Euler(-12f, 0f, 0f)));
+            b.AddBox(Black, Vector3.zero, new Vector3(0.004f, 0.046f, 0.018f),
+                Matrix4x4.TRS(new Vector3(side * 0.028f, 0.110f, -0.152f), Quaternion.Euler(-12f, 0f, 0f), Vector3.one));
         }
 
         // Rear wing with a gurney lip.

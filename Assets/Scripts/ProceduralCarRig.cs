@@ -25,6 +25,9 @@ public sealed class ProceduralCarRig : MonoBehaviour
 
     public float ReferenceSpeed { get; set; } = 0.5f;
 
+    /// <summary>The sprung shell (driver camera mount).</summary>
+    public Transform Body => _body;
+
     public void Configure(Transform body, Transform[] steerPivots, Transform[] spinners, float wheelRadius)
     {
         _body = body;
