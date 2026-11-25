@@ -283,7 +283,8 @@ public sealed class ARDemoController : MonoBehaviour
         part.transform.localScale = scale;
         var material = ProceduralCarFactory.GetMaterial(color);
         if (material != null) part.GetComponent<Renderer>().sharedMaterial = material;
-        part.GetComponent<Collider>().enabled = false;
+        // Builds strip SphereCollider/CapsuleCollider (no scene uses them), so CreatePrimitive may add none.
+        if (part.TryGetComponent<Collider>(out var collider)) Destroy(collider);
     }
 
     /// <summary>Chase camera for the virtual table; in AR the phone itself is the camera.</summary>
