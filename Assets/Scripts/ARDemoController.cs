@@ -68,6 +68,7 @@ public sealed partial class ARDemoController : MonoBehaviour
 
     // Garage coins earned this round.
     private int _roundEarned;
+    private int _adBonus; // coins added by the rewarded ad this round (0 = not watched)
     private int _placePrize;
     private int _coinsRewarded;
     private bool _prizeGiven;
@@ -131,6 +132,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private void Start()
     {
         GameStore.Init();
+        GameAds.Init();
         StartCoroutine(CheckARSupport());
     }
 
@@ -145,7 +147,8 @@ public sealed partial class ARDemoController : MonoBehaviour
 
     private void OnApplicationPause(bool paused)
     {
-        if (paused && _screen == UiScreen.Game && _arena != null && !IsOnline) OpenPause();
+        // A full-screen ad also pauses the app; that must not open the pause menu.
+        if (paused && _screen == UiScreen.Game && _arena != null && !IsOnline && !GameAds.Showing) OpenPause();
     }
 
     private void OnDestroy()

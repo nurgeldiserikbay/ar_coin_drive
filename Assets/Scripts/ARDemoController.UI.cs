@@ -762,6 +762,7 @@ public sealed partial class ARDemoController
         GameSettings.Vibration = vibration == 0;
         var steering = SegmentRow(x, ref y, columnWidth, row, "Steering", new[] { "BUTTONS", "TILT" }, (int)GameSettings.Steering);
         GameSettings.Steering = (SteeringSetting)steering;
+        PrivacyRow(x, ref y, columnWidth, row);
 
         if (columns == 2)
         {
@@ -800,6 +801,27 @@ public sealed partial class ARDemoController
             GameSettings.BatterySaver = saver == 1;
             GameSettings.ApplyFrameRate();
         }
+    }
+
+    /// <summary>Privacy policy link and, where consent law applies, the ad consent choice.</summary>
+    private void PrivacyRow(float x, ref float y, float width, float row)
+    {
+        var policy = !string.IsNullOrEmpty(GameAds.PrivacyPolicyUrl);
+        var choices = GameAds.PrivacyOptionsRequired;
+        if (!policy && !choices) return;
+        _ui.Text(new Rect(x, y, U(100f), row), "Privacy", 14, TextAnchor.MiddleLeft, Color.white);
+        var left = x + U(110f);
+        var buttons = (policy ? 1 : 0) + (choices ? 1 : 0);
+        var buttonWidth = (width - U(110f) - U(8f) * (buttons - 1)) / buttons;
+        if (policy)
+        {
+            if (_ui.Button(new Rect(left, y + U(3f), buttonWidth, row - U(6f)), "POLICY", UiKit.Look.Ghost, false, 12))
+                Application.OpenURL(GameAds.PrivacyPolicyUrl);
+            left += buttonWidth + U(8f);
+        }
+        if (choices && _ui.Button(new Rect(left, y + U(3f), buttonWidth, row - U(6f)), "AD CHOICES", UiKit.Look.Ghost, false, 12))
+            GameAds.ShowPrivacyOptions();
+        y += row + U(6f);
     }
 
     private float SliderRow(float x, ref float y, float width, float row, string label, float value)
@@ -1238,7 +1260,9 @@ public sealed partial class ARDemoController
     {
         var order = _mode == GameMode.Battle ? BattleOrder() : RaceOrder();
         var rowHeight = U(30f);
-        var height = U(70f) + rowHeight * order.Count + U(114f);
+        // Offered once per round, never in LAN games (a full-screen ad pauses the session) or to VIP players.
+        var offerAd = !IsOnline && _adBonus == 0 && _roundEarned > 0 && GameAds.RewardedReady;
+        var height = U(70f) + rowHeight * order.Count + U(114f) + (offerAd || _adBonus > 0 ? U(54f) : 0f);
         var panel = CenterPanel(area, U(420f), Mathf.Min(height, area.height));
         _ui.Panel(panel);
         var inner = Inset(panel, U(14f));
@@ -1269,19 +1293,43 @@ public sealed partial class ARDemoController
             var earned = new Rect(inner.center.x - U(110f), y + U(2f), U(220f), U(24f));
             _ui.Icon(new Rect(earned.x, earned.y, U(22f), U(22f)), UiIcon.Coin, UiKit.AccentColor);
             _ui.Text(new Rect(earned.x + U(28f), earned.y, earned.width - U(28f), earned.height),
-                "+" + _roundEarned + " coins" + (PlayerProfile.Vip ? " (VIP x2)" : "") + "  •  total " + PlayerProfile.Coins.ToString("N0"), 13, TextAnchor.MiddleLeft, Color.white, true);
+                "+" + (_roundEarned + _adBonus) + " coins" + (PlayerProfile.Vip ? " (VIP x2)" : "") + "  •  total " + PlayerProfile.Coins.ToString("N0"), 13, TextAnchor.MiddleLeft, Color.white, true);
         }
 
         var buttonY = inner.yMax - U(46f);
         var half = (inner.width - U(10f)) * 0.5f;
+        var adRect = new Rect(inner.x, buttonY - U(54f), inner.width, U(46f));
+        if (_adBonus > 0)
+            _ui.Text(adRect, "Ad bonus: +" + _adBonus + " coins. Thanks for watching!", 14, TextAnchor.MiddleCenter, UiKit.AccentColor, true);
+        else if (offerAd && _ui.Button(adRect, "WATCH AD:  +" + _roundEarned + " COINS", UiKit.Look.Accent, false, 15, UiIcon.Play))
+        {
+            var bonus = _roundEarned;
+            GameAds.ShowRewarded(() =>
+            {
+                PlayerProfile.Earn(bonus);
+                _adBonus = bonus;
+                _earnFlashAt = Time.time;
+                GameAudio.Instance.Play(GameAudio.Sfx.Coin);
+            });
+        }
+
         if (IsClient)
         {
             _ui.Text(new Rect(inner.x, buttonY, inner.width, U(46f)), "Waiting for the host to start again...", 13, TextAnchor.MiddleCenter, UiKit.TextDim);
             return;
         }
 
-        if (_ui.Button(new Rect(inner.x, buttonY, half, U(46f)), "AGAIN", UiKit.Look.Primary, false, 16, UiIcon.Restart)) StartRound();
-        if (_ui.Button(new Rect(inner.x + half + U(10f), buttonY, half, U(46f)), "MENU", UiKit.Look.Ghost, false, 16)) OpenPause();
+        if (_ui.Button(new Rect(inner.x, buttonY, half, U(46f)), "AGAIN", UiKit.Look.Primary, false, 16, UiIcon.Restart))
+            AfterRound(StartRound);
+        if (_ui.Button(new Rect(inner.x + half + U(10f), buttonY, half, U(46f)), "MENU", UiKit.Look.Ghost, false, 16))
+            AfterRound(OpenPause);
+    }
+
+    /// <summary>Leaves the results: an interstitial may play first, except in LAN games.</summary>
+    private void AfterRound(System.Action next)
+    {
+        if (IsOnline) next();
+        else GameAds.AfterRound(_adBonus > 0, next);
     }
 
     private void DebugLine(Rect area)

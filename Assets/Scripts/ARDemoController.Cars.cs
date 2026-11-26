@@ -111,6 +111,7 @@ public sealed partial class ARDemoController
         _placePrize = 0;
         _coinsRewarded = 0;
         _prizeGiven = false;
+        _adBonus = 0;
 
         if (IsClient)
         {

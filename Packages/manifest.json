@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "com.google.ads.mobile": "11.6.0",
     "com.unity.ai.assistant": "2.21.0-pre.2",
     "com.unity.ai.inference": "2.6.1",
     "com.unity.purchasing": "5.4.4",
@@ -12,5 +13,14 @@
     "com.unity.modules.tetgen": "1.0.0",
     "com.unity.modules.timelinefoundation": "1.0.0",
     "com.unity.modules.vectorgraphics": "1.0.0"
-  }
+  },
+  "scopedRegistries": [
+    {
+      "name": "OpenUPM",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.google.ads.mobile"
+      ]
+    }
+  ]
 }
