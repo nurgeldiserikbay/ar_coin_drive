@@ -25,6 +25,9 @@ public sealed class ProceduralCarRig : MonoBehaviour
 
     public float ReferenceSpeed { get; set; } = 0.5f;
 
+    /// <summary>Uniform scale of the car in the scene; wheels spin to match the ground at that size.</summary>
+    public float SizeScale { get; set; } = 1f;
+
     /// <summary>The sprung shell (driver camera mount).</summary>
     public Transform Body => _body;
 
@@ -46,7 +49,7 @@ public sealed class ProceduralCarRig : MonoBehaviour
     {
         if (_body == null || deltaTime <= 0f) return;
 
-        _spin = Mathf.Repeat(_spin + speed * deltaTime / _wheelRadius * Mathf.Rad2Deg, 360f);
+        _spin = Mathf.Repeat(_spin + speed * deltaTime / (_wheelRadius * SizeScale) * Mathf.Rad2Deg, 360f);
         for (var i = 0; i < _spinners.Length; i++)
             _spinners[i].localRotation = Quaternion.Euler(_spin, 0f, 0f);
 

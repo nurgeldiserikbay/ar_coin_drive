@@ -39,6 +39,12 @@ public static class CarCatalog
 {
     public const float Scale = 1f / 18f;
 
+    /// <summary>
+    /// Cars in races, battles and free drive are this much smaller than in the garage, so several fit
+    /// side by side on the track and can overtake. Applies to the model and the collision footprint.
+    /// </summary>
+    public const float GameScale = 0.7f;
+
     public static readonly CarSpec[] All =
     {
         new CarSpec
@@ -152,8 +158,8 @@ public static class CarTuning
             Drift = b.Drift,
             Mass = b.Mass * (1f - 0.05f * tune.Weight),
             OffRoad = Mathf.Min(1f, b.OffRoad * (1f + 0.04f * tune.Tyres)),
-            HalfWidth = b.HalfWidth,
-            HalfLength = b.HalfLength
+            HalfWidth = b.HalfWidth * CarCatalog.GameScale,
+            HalfLength = b.HalfLength * CarCatalog.GameScale
         };
         Cache[key] = tuned;
         return tuned;

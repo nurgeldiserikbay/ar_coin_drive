@@ -671,7 +671,9 @@ public sealed partial class ARDemoController : MonoBehaviour
         var forward2 = CarCollision.Forward(_player.Heading);
         var forward = _arena.TransformDirection(new Vector3(forward2.x, 0f, forward2.y));
         var up = _arena.up;
-        var desiredPosition = car.position - forward * 0.56f + up * 0.40f;
+        // Closer for the smaller in-game cars, but not by the full factor: a little more road stays in view.
+        var chase = Mathf.Lerp(1f, CarCatalog.GameScale, 0.6f);
+        var desiredPosition = car.position - forward * (0.56f * chase) + up * (0.40f * chase);
         if (_room != null)
         {
             // Keep the chase camera inside the walls of the room the car is in.
@@ -680,7 +682,7 @@ public sealed partial class ARDemoController : MonoBehaviour
             desiredPosition.z = Mathf.Clamp(desiredPosition.z, roomRect.yMin + 0.15f, roomRect.yMax - 0.15f);
         }
 
-        var lookTarget = car.position + forward * 0.3f;
+        var lookTarget = car.position + forward * (0.3f * chase);
         var cameraTransform = _arCamera.transform;
         if (_snapChaseCamera)
         {

@@ -16,7 +16,14 @@ public sealed class RaceTrack
     public const float TubeRadius = 0.011f;
     public static readonly string[] LayoutNames = { "Classic", "Kidney", "Hairpins", "Stadium", "Twister" };
     public static readonly float[] SizeHalfExtent = { 0.75f, 1.2f, 1.6f };
-    private static readonly float[] SizeRoadHalfWidth = { 0.125f, 0.15f, 0.18f };
+    // Wanted road half widths (S, M, L). Tight layouts get the widest road their barriers allow,
+    // but never less than MinRoadHalfWidth.
+    private static readonly float[] SizeRoadHalfWidth = { 0.16f, 0.19f, 0.22f };
+    private const float MinRoadHalfWidth = 0.125f;
+    // Curb plus astroturf run-off between the road edge and the foam tube.
+    private const float RunOffWidth = 0.038f;
+    // Bare floor kept between the tubes of two neighbouring parts of the track.
+    public const float MinBarrierGap = 0.02f;
 
     private const float SampleSpacing = 0.025f;
     private const float GridCell = 0.08f;
@@ -94,47 +101,56 @@ public sealed class RaceTrack
     {
         Layout = layout;
         Size = size;
-        RoadHalfWidth = SizeRoadHalfWidth[(int)size];
-        RailOffset = RoadHalfWidth + 0.053f;
-
         // Smooth closed curve through the layout's control points, normalised to the size.
         var raw = DenseCurve(ControlPoints(layout), 2000);
         var max = 0f;
         foreach (var p in raw) max = Mathf.Max(max, Mathf.Max(Mathf.Abs(p.x), Mathf.Abs(p.y)));
-        var scale = (SizeHalfExtent[(int)size] - RailOffset - 0.03f) / max;
 
-        // Resample at an even spacing so speed and progress are uniform around the lap.
-        var length = 0f;
-        for (var i = 0; i < raw.Count; i++) length += (raw[(i + 1) % raw.Count] - raw[i]).magnitude * scale;
-        Length = length;
-        _count = Mathf.Max(60, Mathf.RoundToInt(length / SampleSpacing));
-        _center = new Vector2[_count];
-        _tangent = new Vector2[_count];
-        _outward = new Vector2[_count];
-        var step = length / _count;
-        var travelled = 0f;
-        var target = 0f;
-        var k = 0;
-        for (var i = 0; i < raw.Count && k < _count; i++)
+        var roadHalf = SizeRoadHalfWidth[(int)size];
+        for (var attempt = 0; ; attempt++)
         {
-            var a = raw[i] * scale;
-            var b = raw[(i + 1) % raw.Count] * scale;
-            var segment = (b - a).magnitude;
-            while (target <= travelled + segment && k < _count)
+            RoadHalfWidth = roadHalf;
+            RailOffset = roadHalf + RunOffWidth;
+            var scale = (SizeHalfExtent[(int)size] - RailOffset - 0.03f) / max;
+
+            // Resample at an even spacing so speed and progress are uniform around the lap.
+            var length = 0f;
+            for (var i = 0; i < raw.Count; i++) length += (raw[(i + 1) % raw.Count] - raw[i]).magnitude * scale;
+            Length = length;
+            _count = Mathf.Max(60, Mathf.RoundToInt(length / SampleSpacing));
+            _center = new Vector2[_count];
+            _tangent = new Vector2[_count];
+            _outward = new Vector2[_count];
+            var step = length / _count;
+            var travelled = 0f;
+            var target = 0f;
+            var k = 0;
+            for (var i = 0; i < raw.Count && k < _count; i++)
             {
-                _center[k++] = Vector2.Lerp(a, b, segment > 0f ? (target - travelled) / segment : 0f);
-                target += step;
+                var a = raw[i] * scale;
+                var b = raw[(i + 1) % raw.Count] * scale;
+                var segment = (b - a).magnitude;
+                while (target <= travelled + segment && k < _count)
+                {
+                    _center[k++] = Vector2.Lerp(a, b, segment > 0f ? (target - travelled) / segment : 0f);
+                    target += step;
+                }
+
+                travelled += segment;
             }
 
-            travelled += segment;
-        }
+            for (; k < _count; k++) _center[k] = _center[k - 1];
+            for (var i = 0; i < _count; i++)
+            {
+                var delta = _center[(i + 1) % _count] - _center[(i + _count - 1) % _count];
+                _tangent[i] = delta.normalized;
+                _outward[i] = new Vector2(_tangent[i].y, -_tangent[i].x);
+            }
 
-        for (; k < _count; k++) _center[k] = _center[k - 1];
-        for (var i = 0; i < _count; i++)
-        {
-            var delta = _center[(i + 1) % _count] - _center[(i + _count - 1) % _count];
-            _tangent[i] = delta.normalized;
-            _outward[i] = new Vector2(_tangent[i].y, -_tangent[i].x);
+            // Narrow the road until the barriers of neighbouring parts of the track keep apart.
+            var fits = (ClosestApproach() - MinBarrierGap) * 0.5f - TubeRadius - RunOffWidth;
+            if (roadHalf <= fits + 0.0005f || roadHalf <= MinRoadHalfWidth || attempt >= 5) break;
+            roadHalf = Mathf.Max(MinRoadHalfWidth, fits - 0.002f);
         }
 
         var extent = SizeHalfExtent[(int)size];

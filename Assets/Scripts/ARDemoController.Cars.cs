@@ -215,6 +215,8 @@ public sealed partial class ARDemoController
         var car = new Car { Id = id, Name = name, ColorIndex = colorIndex, IsLocal = local, IsBot = bot, Spec = spec, SpecIndex = specIndex, Build = build };
         car.Root = ProceduralCarFactory.CreateCar(_roundRoot, spec, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex), look).transform;
         car.Rig = car.Root.GetComponent<ProceduralCarRig>();
+        car.Root.localScale = Vector3.one * CarCatalog.GameScale;
+        if (car.Rig != null) car.Rig.SizeScale = CarCatalog.GameScale;
         if (car.Rig != null) car.Rig.ReferenceSpeed = spec.TopSpeed * SpeedScale;
         car.Voice = GameAudio.Instance.AttachEngine(car.Root, local);
         _cars.Add(car);
