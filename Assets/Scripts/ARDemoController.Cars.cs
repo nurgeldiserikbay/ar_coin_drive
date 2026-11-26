@@ -190,6 +190,7 @@ public sealed partial class ARDemoController
             used.Add(color);
             // Computer drivers get a mix of the other cars.
             var spec = (GameSettings.CarType + 1 + i * 2) % CarCatalog.All.Length;
+            if (PlayerProfile.IsPremium(spec)) spec = (spec + 2) % 6; // bots stick to the regular cars
             // ...tuned like the player's car (stock looks), so upgrades never make races a walkover.
             PlayerProfile.UnpackBuild(playerBuild, color, out var tune, out _);
             var botLook = CarLook.Stock(color);
@@ -902,8 +903,7 @@ public sealed partial class ARDemoController
         if (picked > 0)
         {
             var amount = picked * (_mode == GameMode.Free ? PlayerProfile.CoinPickupFree : PlayerProfile.CoinPickupRound);
-            PlayerProfile.Earn(amount);
-            _roundEarned += amount;
+            _roundEarned += PlayerProfile.Reward(amount);
             _earnFlashAt = Time.time;
         }
 
@@ -911,7 +911,7 @@ public sealed partial class ARDemoController
         if (_prizeGiven || _state != GameState.Finished || _mode == GameMode.Free || _player.Place <= 0) return;
         _prizeGiven = true;
         _placePrize = _mode == GameMode.Race ? PlayerProfile.RaceReward(_player.Place, _cars.Count) : PlayerProfile.BattleReward(_player.Place, _cars.Count);
-        PlayerProfile.Earn(_placePrize);
+        _placePrize = PlayerProfile.Reward(_placePrize);
         _roundEarned += _placePrize;
         _earnFlashAt = Time.time;
         GameAudio.Instance.Play(GameAudio.Sfx.Coin);

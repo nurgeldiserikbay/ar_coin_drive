@@ -12,7 +12,9 @@ public static class PlayerProfile
     private const int StartingCoins = 300;
 
     // Car prices by catalogue index: the RC buggy and the tuner are free.
-    private static readonly int[] CarPrices = { 0, 0, 1800, 4500, 2600, 3400 };
+    // -1 marks a premium car, sold for real money in the store (GameStore).
+    private static readonly int[] CarPrices = { 0, 0, 1800, 4500, 2600, 3400, -1, -1 };
+    private const int VipBit = 30;
     private static readonly int[] EngineCost = { 250, 500, 900 };
     private static readonly int[] TyreCost = { 180, 360, 700 };
     private static readonly int[] WeightCost = { 200, 420, 800 };
@@ -39,6 +41,27 @@ public static class PlayerProfile
     public static int Coins { get { Load(); return _coins; } }
 
     public static bool Owns(int car) { Load(); return (_owned & (1 << car)) != 0; }
+    public static bool IsPremium(int car) => CarPrice(car) < 0;
+
+    /// <summary>VIP pass: double coins from every reward.</summary>
+    public static bool Vip { get { Load(); return (_owned & (1 << VipBit)) != 0; } }
+
+    /// <summary>Grants a store purchase (premium car or VIP). Safe to call again for the same item.</summary>
+    public static void GrantCar(int car)
+    {
+        Load();
+        if (Owns(car)) return;
+        _owned |= 1 << Clamp(car);
+        Save();
+    }
+
+    public static void GrantVip()
+    {
+        Load();
+        if (Vip) return;
+        _owned |= 1 << VipBit;
+        Save();
+    }
     public static int CarPrice(int car) => CarPrices[Mathf.Clamp(car, 0, CarPrices.Length - 1)];
     public static CarTune Tune(int car) { Load(); return _tunes[Clamp(car)]; }
     public static CarLook Look(int car) { Load(); return _looks[Clamp(car)]; }
@@ -49,7 +72,7 @@ public static class PlayerProfile
     public static bool TryBuyCar(int car)
     {
         Load();
-        if (Owns(car) || !Spend(CarPrice(car))) return false;
+        if (Owns(car) || IsPremium(car) || !Spend(CarPrice(car))) return false;
         _owned |= 1 << car;
         Save();
         return true;
@@ -72,7 +95,7 @@ public static class PlayerProfile
         if (level >= CarTune.MaxLevel) return 0;
         var table = upgrade == Upgrade.Engine ? EngineCost : upgrade == Upgrade.Tyres ? TyreCost : WeightCost;
         // Faster cars cost more to tune.
-        var scale = 1f + CarPrice(car) / 9000f;
+        var scale = 1f + (IsPremium(car) ? 6000 : CarPrice(car)) / 9000f;
         return Mathf.RoundToInt(table[level] * scale / 10f) * 10;
     }
 
@@ -153,6 +176,15 @@ public static class PlayerProfile
         // Last place always gets the smallest prize, so a 2-car race pays 1st or 4th-tier money.
         var index = place >= cars ? table.Length - 1 : Mathf.Min(place - 1, table.Length - 1);
         return table[index];
+    }
+
+    /// <summary>Adds a reward (doubled with the VIP pass); returns what was actually added.</summary>
+    public static int Reward(int amount)
+    {
+        if (amount <= 0) return 0;
+        if (Vip) amount *= 2;
+        Earn(amount);
+        return amount;
     }
 
     public static void Earn(int amount)

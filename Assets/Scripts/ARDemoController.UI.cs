@@ -73,10 +73,29 @@ public sealed partial class ARDemoController
 
     // ------------------------------------------------------------------ main menu
 
+    private bool _vipOpen;
+
     private void MenuScreen()
     {
         var area = SafeRect();
         _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, _cameraFrameCount > 0 ? 0.7f : 1f));
+        if (_vipOpen)
+        {
+            VipPanel(area);
+            return;
+        }
+
+        var vipRect = new Rect(area.xMax - U(130f), area.y + U(44f), U(130f), U(36f));
+        if (PlayerProfile.Vip)
+        {
+            _ui.Panel(vipRect);
+            _ui.Icon(new Rect(vipRect.x + U(8f), vipRect.center.y - U(11f), U(22f), U(22f)), UiIcon.Trophy, UiKit.AccentColor);
+            _ui.Text(new Rect(vipRect.x + U(34f), vipRect.y, vipRect.width - U(40f), vipRect.height), "VIP x2", 14, TextAnchor.MiddleLeft, UiKit.AccentColor, true);
+        }
+        else if (_ui.Button(vipRect, "VIP", UiKit.Look.Accent, false, 14, UiIcon.Trophy))
+        {
+            _vipOpen = true;
+        }
 
         // Layout: the player's car on a turntable as the hero image, logo, then the actions.
         Rect hero;
@@ -134,6 +153,41 @@ public sealed partial class ARDemoController
         _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor]
             + " " + CarCatalog.Get(GameSettings.CarType).Name, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
         CoinChip(new Rect(area.xMax - U(130f), area.y, U(130f), U(36f)));
+    }
+
+    /// <summary>The VIP pass offer, plus restoring purchases on a new phone.</summary>
+    private void VipPanel(Rect area)
+    {
+        var panel = CenterPanel(area, U(420f), Mathf.Min(area.height, U(400f)));
+        _ui.Panel(panel);
+        var inner = Inset(panel, U(18f));
+        var y = inner.y;
+        _ui.Icon(new Rect(inner.center.x - U(24f), y, U(48f), U(48f)), UiIcon.Trophy, UiKit.AccentColor);
+        y += U(54f);
+        _ui.Text(new Rect(inner.x, y, inner.width, U(32f)), "VIP PASS", 24, TextAnchor.MiddleCenter, Color.white, true);
+        y += U(40f);
+        foreach (var line in new[] { "Double coins from every race, battle and pickup", "No ads, ever", "One-time purchase, yours for good" })
+        {
+            _ui.Icon(new Rect(inner.x, y + U(4f), U(18f), U(18f)), UiIcon.Coin, UiKit.AccentColor);
+            _ui.Text(new Rect(inner.x + U(26f), y, inner.width - U(26f), U(26f)), line, 14, TextAnchor.MiddleLeft, Color.white);
+            y += U(30f);
+        }
+
+        if (GameStore.Message != null && Time.unscaledTime - GameStore.MessageAt < 4f)
+            _ui.Text(new Rect(inner.x, y, inner.width, U(22f)), GameStore.Message, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
+
+        var buttonY = inner.yMax - U(100f);
+        if (PlayerProfile.Vip)
+            _ui.Text(new Rect(inner.x, buttonY, inner.width, U(46f)), "You are VIP. Thank you!", 16, TextAnchor.MiddleCenter, UiKit.AccentColor, true);
+        else if (_ui.Button(new Rect(inner.x, buttonY, inner.width, U(46f)),
+                     GameStore.Busy ? "PLEASE WAIT..." : "GET VIP  " + GameStore.Price(GameStore.VipProduct), UiKit.Look.Primary, false, 17, UiIcon.Trophy))
+            GameStore.Buy(GameStore.VipProduct);
+
+        var half = (inner.width - U(10f)) * 0.5f;
+        if (_ui.Button(new Rect(inner.x, inner.yMax - U(44f), half, U(44f)), "RESTORE", UiKit.Look.Ghost, false, 13, UiIcon.Restart))
+            GameStore.Restore();
+        if (_ui.Button(new Rect(inner.x + half + U(10f), inner.yMax - U(44f), half, U(44f)), "CLOSE", UiKit.Look.Normal, false, 13, UiIcon.Back))
+            _vipOpen = false;
     }
 
     // ------------------------------------------------------------------ garage
@@ -239,7 +293,8 @@ public sealed partial class ARDemoController
 
         if (_garage != null && _garage.Texture != null) _ui.Image(preview, _garage.Texture, owned ? 1f : 0.55f);
         if (!owned)
-            _ui.Text(new Rect(preview.x, preview.y + U(8f), preview.width, U(30f)), "LOCKED", 18, TextAnchor.MiddleCenter, Color.white, true, true);
+            _ui.Text(new Rect(preview.x, preview.y + U(8f), preview.width, U(30f)), PlayerProfile.IsPremium(index) ? "PREMIUM" : "LOCKED", 18, TextAnchor.MiddleCenter,
+                PlayerProfile.IsPremium(index) ? UiKit.AccentColor : Color.white, true, true);
 
         // Arrows browse the cars; browsing onto a car you own selects it.
         var arrow = U(54f);
@@ -275,13 +330,24 @@ public sealed partial class ARDemoController
         // The note line (purchases, not enough coins) sits at the bottom of the panel.
         var noteHeight = U(20f);
         var bottom = inner.yMax - noteHeight;
-        if (_garageNote != null && Time.unscaledTime - _garageNoteAt < 2.5f)
+        if (GameStore.MessageAt > _garageNoteAt && Time.unscaledTime - GameStore.MessageAt < 4f)
+            _ui.Text(new Rect(inner.x, bottom, inner.width, noteHeight), GameStore.Message, 12, TextAnchor.MiddleCenter, Color.white, true);
+        else if (_garageNote != null && Time.unscaledTime - _garageNoteAt < 2.5f)
             _ui.Text(new Rect(inner.x, bottom, inner.width, noteHeight), _garageNote, 12, TextAnchor.MiddleCenter,
                 _garageNoteBad ? new Color(1f, 0.45f, 0.4f) : new Color(0.45f, 1f, 0.5f), true);
 
         if (!owned)
         {
             GarageStats(inner.x, ref y, inner.width, bottom - U(56f) - y, baseSpec, spec);
+            if (PlayerProfile.IsPremium(index))
+            {
+                var product = GameStore.ProductForCar(index);
+                var label = GameStore.Busy ? "PLEASE WAIT..." : "BUY  " + GameStore.Price(product);
+                if (_ui.Button(new Rect(inner.x, bottom - U(50f), inner.width, U(46f)), label, UiKit.Look.Primary, false, 16, UiIcon.Car))
+                    GameStore.Buy(product);
+                return;
+            }
+
             var price = PlayerProfile.CarPrice(index);
             var affordable = PlayerProfile.Coins >= price;
             if (_ui.Button(new Rect(inner.x, bottom - U(50f), inner.width, U(46f)), "BUY  " + price.ToString("N0"),
@@ -1137,7 +1203,7 @@ public sealed partial class ARDemoController
             var earned = new Rect(inner.center.x - U(110f), y + U(2f), U(220f), U(24f));
             _ui.Icon(new Rect(earned.x, earned.y, U(22f), U(22f)), UiIcon.Coin, UiKit.AccentColor);
             _ui.Text(new Rect(earned.x + U(28f), earned.y, earned.width - U(28f), earned.height),
-                "+" + _roundEarned + " coins  (total " + PlayerProfile.Coins.ToString("N0") + ")", 13, TextAnchor.MiddleLeft, Color.white, true);
+                "+" + _roundEarned + " coins" + (PlayerProfile.Vip ? " (VIP x2)" : "") + "  •  total " + PlayerProfile.Coins.ToString("N0"), 13, TextAnchor.MiddleLeft, Color.white, true);
         }
 
         var buttonY = inner.yMax - U(46f);

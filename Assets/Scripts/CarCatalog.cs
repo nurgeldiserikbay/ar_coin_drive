@@ -1,6 +1,6 @@
 using UnityEngine;
 
-public enum CarBody { Buggy, Tuner, Muscle, Super, Rally, Offroad }
+public enum CarBody { Buggy, Tuner, Muscle, Super, Rally, Offroad, GT, Proto }
 
 /// <summary>
 /// One car type: how it looks (an original procedural design) and how it drives. Shapes are
@@ -76,6 +76,19 @@ public static class CarCatalog
             Id = "titan", Name = "Titan X", Class = "Off-roader", Body = CarBody.Offroad, DefaultColor = 3,
             TopSpeed = 0.50f, Acceleration = 0.92f, TurnRate = 112f, Grip = 10f, Drift = 0.3f, Mass = 1.65f, OffRoad = 1f,
             HalfWidth = 0.058f, HalfLength = 0.130f
+        },
+        // Premium cars (bought in the store for real money).
+        new CarSpec
+        {
+            Id = "stinger", Name = "Stinger GT", Class = "Grand tourer", Body = CarBody.GT, DefaultColor = 5,
+            TopSpeed = 0.68f, Acceleration = 1.25f, TurnRate = 142f, Grip = 12f, Drift = 0.5f, Mass = 1.25f, OffRoad = 0.5f,
+            HalfWidth = 0.055f, HalfLength = 0.131f
+        },
+        new CarSpec
+        {
+            Id = "apex", Name = "Apex LM", Class = "Endurance prototype", Body = CarBody.Proto, DefaultColor = 8,
+            TopSpeed = 0.73f, Acceleration = 1.30f, TurnRate = 150f, Grip = 14.5f, Drift = 0.15f, Mass = 1.0f, OffRoad = 0.35f,
+            HalfWidth = 0.056f, HalfLength = 0.133f
         }
     };
 

@@ -234,6 +234,44 @@ public static class CarModelBuilder
                     }
                 };
                 break;
+            case CarBody.GT:
+                // Long-bonnet front-engined grand tourer with a fastback roof.
+                shape = new Shape
+                {
+                    Length = 4.70f, FrontAxle = 1.50f, RearAxle = -1.25f, WheelRadius = 0.35f, TyreWidth = 0.28f, Track = 0.80f,
+                    Exponent = 4.2f, RoofFront = -0.25f, RoofRear = -1.20f, RimColor = new Color(0.22f, 0.22f, 0.24f), Spokes = 5,
+                    Body = new[]
+                    {
+                        St(2.35f, 0.60f, 0.26f, 0.50f), St(2.22f, 0.88f, 0.20f, 0.62f), St(1.70f, 0.96f, 0.18f, 0.70f),
+                        St(0.80f, 0.94f, 0.18f, 0.74f), St(0.00f, 0.94f, 0.18f, 0.78f), St(-0.90f, 0.98f, 0.20f, 0.84f),
+                        St(-1.60f, 0.98f, 0.22f, 0.86f), St(-2.15f, 0.90f, 0.28f, 0.84f), St(-2.35f, 0.78f, 0.36f, 0.78f)
+                    },
+                    Cabin = new[]
+                    {
+                        St(0.05f, 0.76f, 0.74f, 0.78f), St(-0.30f, 0.72f, 0.77f, 1.18f), St(-0.85f, 0.68f, 0.80f, 1.22f),
+                        St(-1.50f, 0.64f, 0.84f, 1.02f), St(-2.05f, 0.60f, 0.84f, 0.88f)
+                    }
+                };
+                break;
+            case CarBody.Proto:
+                // Endurance prototype: low tub, tall fenders and a narrow bubble canopy.
+                shape = new Shape
+                {
+                    Length = 4.80f, FrontAxle = 1.55f, RearAxle = -1.45f, WheelRadius = 0.36f, TyreWidth = 0.32f, Track = 0.84f,
+                    Exponent = 2.8f, RoofFront = 0.20f, RoofRear = -0.45f, RimColor = new Color(0.08f, 0.08f, 0.09f), Spokes = 10,
+                    Body = new[]
+                    {
+                        St(2.40f, 0.70f, 0.10f, 0.24f), St(2.25f, 0.98f, 0.08f, 0.38f), St(1.55f, 1.00f, 0.08f, 0.64f),
+                        St(0.80f, 0.98f, 0.08f, 0.52f), St(0.00f, 0.98f, 0.08f, 0.58f), St(-0.80f, 1.00f, 0.08f, 0.66f),
+                        St(-1.45f, 1.00f, 0.10f, 0.74f), St(-2.10f, 0.98f, 0.14f, 0.68f), St(-2.40f, 0.90f, 0.18f, 0.62f)
+                    },
+                    Cabin = new[]
+                    {
+                        St(0.95f, 0.48f, 0.45f, 0.52f), St(0.50f, 0.52f, 0.50f, 0.98f), St(0.00f, 0.52f, 0.52f, 1.04f),
+                        St(-0.45f, 0.48f, 0.56f, 0.98f), St(-1.10f, 0.40f, 0.60f, 0.80f)
+                    }
+                };
+                break;
             default: // Tuner
                 shape = new Shape
                 {
@@ -453,6 +491,51 @@ public static class CarModelBuilder
                 foreach (var side in new[] { -1f, 1f })
                     b.Box(new Vector3(side * shape.Track, 0.20f, shape.RearAxle - shape.WheelRadius - 0.06f), new Vector3(0.26f, 0.28f, 0.02f));
                 break;
+
+            case CarBody.GT:
+            {
+                // Bonnet vents, side gills behind the front wheels, a ducktail and quad exhausts.
+                b.Part(Trim, 0.4f, 0.2f);
+                foreach (var x in new[] { -0.30f, 0.30f })
+                    b.Box(new Vector3(x, 0.735f, 1.05f), new Vector3(0.22f, 0.03f, 0.50f));
+                foreach (var side in new[] { -1f, 1f })
+                    for (var i = 0; i < 3; i++)
+                        b.Box(new Vector3(side * 0.95f, 0.50f, shape.FrontAxle - 0.55f - i * 0.12f), new Vector3(0.03f, 0.16f, 0.05f));
+                if (stockSpoiler)
+                {
+                    b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+                    b.Box(new Vector3(0f, tail.Top + 0.03f, tail.Z + 0.06f), new Vector3(1.5f, 0.04f, 0.18f), Matrix4x4.Rotate(Quaternion.Euler(-14f, 0f, 0f)));
+                }
+
+                b.Part(Chrome, 0.85f, 0.95f);
+                var back = shape.Body[shape.Body.Length - 1];
+                foreach (var x in new[] { -0.62f, -0.48f, 0.48f, 0.62f })
+                    b.Cylinder(new Vector3(x, back.Bottom + 0.02f, back.Z + 0.15f), new Vector3(x, back.Bottom + 0.02f, back.Z - 0.04f), 0.045f, 12);
+                break;
+            }
+
+            case CarBody.Proto:
+            {
+                // Shark fin, front splitter, side intakes and a tall endurance wing.
+                b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+                b.Box(new Vector3(0f, 0.80f, -1.05f), new Vector3(0.025f, 0.22f, 1.00f));
+                b.Part(Trim, 0.3f, 0.2f);
+                b.Box(new Vector3(0f, 0.06f, 2.30f), new Vector3(1.90f, 0.03f, 0.30f));
+                foreach (var side in new[] { -1f, 1f })
+                    b.Ellipsoid(new Vector3(side * 0.88f, 0.38f, -0.20f), new Vector3(0.10f, 0.14f, 0.40f));
+                if (stockSpoiler)
+                {
+                    var top = tail.Top + 0.30f;
+                    foreach (var side in new[] { -0.30f, 0.30f })
+                        b.Box(new Vector3(side, tail.Top + 0.15f, tail.Z + 0.10f), new Vector3(0.04f, 0.30f, 0.14f));
+                    b.Box(new Vector3(0f, top, tail.Z + 0.04f), new Vector3(1.90f, 0.04f, 0.40f), Matrix4x4.Rotate(Quaternion.Euler(-8f, 0f, 0f)));
+                    b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+                    foreach (var side in new[] { -0.96f, 0.96f })
+                        b.Box(new Vector3(side, top - 0.05f, tail.Z + 0.04f), new Vector3(0.025f, 0.26f, 0.50f));
+                }
+
+                break;
+            }
 
             case CarBody.Offroad:
                 // Bull bar, roof rack, fender flares, rear spare wheel.

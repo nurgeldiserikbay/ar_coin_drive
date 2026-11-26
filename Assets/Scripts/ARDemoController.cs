@@ -128,7 +128,11 @@ public sealed partial class ARDemoController : MonoBehaviour
         _screen = UiScreen.Menu;
     }
 
-    private void Start() => StartCoroutine(CheckARSupport());
+    private void Start()
+    {
+        GameStore.Init();
+        StartCoroutine(CheckARSupport());
+    }
 
     /// <summary>Learns whether AR can run; the menu disables AR play if it cannot.</summary>
     private IEnumerator CheckARSupport()
