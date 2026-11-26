@@ -23,7 +23,7 @@ public sealed partial class ARDemoController
         LeaveNetwork(false);
         try
         {
-            _net = LanSession.Host(GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType);
+            _net = LanSession.Host(GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType, PlayerProfile.BuildOf(GameSettings.CarType));
             if (_mode == GameMode.Free) _mode = GameMode.Race;
             _buildMode = false;
         }
@@ -39,7 +39,7 @@ public sealed partial class ARDemoController
         LeaveNetwork(false);
         try
         {
-            _net = LanSession.Browse(GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType);
+            _net = LanSession.Browse(GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType, PlayerProfile.BuildOf(GameSettings.CarType));
         }
         catch (System.Exception exception)
         {
@@ -143,6 +143,7 @@ public sealed partial class ARDemoController
                 writer.Write((byte)car.Id);
                 writer.Write((byte)car.ColorIndex);
                 writer.Write((byte)car.SpecIndex);
+                writer.Write((ushort)car.Build);
                 var flags = (car.Finished ? 1 : 0) | (car.Out ? 2 : 0) | (Time.time < car.BoostUntil ? 4 : 0) | (car.IsBot ? 8 : 0);
                 writer.Write((byte)flags);
                 writer.Write(car.Position.x);
@@ -262,6 +263,7 @@ public sealed partial class ARDemoController
                     var id = reader.ReadByte();
                     var color = reader.ReadByte();
                     var carType = reader.ReadByte();
+                    var build = (int)reader.ReadUInt16();
                     var flags = reader.ReadByte();
                     var position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
                     var heading = reader.ReadSingle();
@@ -277,10 +279,10 @@ public sealed partial class ARDemoController
                     seen.Add(id);
 
                     var car = _cars.Find(c => c.Id == id);
-                    if (car == null || car.ColorIndex != color || car.SpecIndex != carType)
+                    if (car == null || car.ColorIndex != color || car.SpecIndex != carType || car.Build != build)
                     {
                         if (car != null) RemoveCar(car);
-                        car = AddCar(id, name, Mathf.Clamp(color, 0, GameSettings.CarColors.Length - 1), carType, id == _net.Slot, (flags & 8) != 0);
+                        car = AddCar(id, name, Mathf.Clamp(color, 0, GameSettings.CarColors.Length - 1), carType, build, id == _net.Slot, (flags & 8) != 0);
                         if (car.IsLocal) _player = car;
                     }
 

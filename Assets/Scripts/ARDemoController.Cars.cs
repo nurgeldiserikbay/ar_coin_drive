@@ -17,6 +17,7 @@ public sealed partial class ARDemoController
         public GameAudio.EngineVoice Voice;
         public CarSpec Spec;
         public int SpecIndex;
+        public int Build;           // upgrades and look (PlayerProfile.PackBuild)
         public float Lateral;       // sideways slide speed (drift)
 
         public Vector2 Position;
@@ -106,6 +107,10 @@ public sealed partial class ARDemoController
         _finishCounter = 0;
         _newBest = false;
         _hint = null;
+        _roundEarned = 0;
+        _placePrize = 0;
+        _coinsRewarded = 0;
+        _prizeGiven = false;
 
         if (IsClient)
         {
@@ -162,7 +167,8 @@ public sealed partial class ARDemoController
     private void CreateCars()
     {
         var used = new HashSet<int>();
-        _player = AddCar(0, GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType, true, false);
+        var playerBuild = PlayerProfile.BuildOf(GameSettings.CarType);
+        _player = AddCar(0, GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType, playerBuild, true, false);
         used.Add(_player.ColorIndex);
 
         if (IsHost)
@@ -171,7 +177,7 @@ public sealed partial class ARDemoController
             {
                 var color = used.Contains(peer.Color) ? FreeColor(used) : peer.Color;
                 used.Add(color);
-                AddCar(peer.Slot, peer.Name, color, peer.CarType, false, false);
+                AddCar(peer.Slot, peer.Name, color, peer.CarType, peer.Build, false, false);
             }
         }
 
@@ -184,22 +190,28 @@ public sealed partial class ARDemoController
             used.Add(color);
             // Computer drivers get a mix of the other cars.
             var spec = (GameSettings.CarType + 1 + i * 2) % CarCatalog.All.Length;
-            AddCar(4 + i, "CPU " + (i + 1), color, spec, false, true);
+            // ...tuned like the player's car (stock looks), so upgrades never make races a walkover.
+            PlayerProfile.UnpackBuild(playerBuild, color, out var tune, out _);
+            var botLook = CarLook.Stock(color);
+            botLook.Rim = (i + 1) % CarLook.RimNames.Length;
+            AddCar(4 + i, "CPU " + (i + 1), color, spec, PlayerProfile.PackBuild(tune, botLook), false, true);
         }
     }
 
     private static int FreeColor(HashSet<int> used)
     {
-        foreach (var preferred in new[] { 1, 2, 3, 4, 5, 0, 6, 7 })
+        foreach (var preferred in new[] { 1, 2, 3, 4, 5, 0, 6, 7, 8, 9, 10, 11 })
             if (!used.Contains(preferred)) return preferred;
         return 0;
     }
 
-    private Car AddCar(int id, string name, int colorIndex, int specIndex, bool local, bool bot)
+    private Car AddCar(int id, string name, int colorIndex, int specIndex, int build, bool local, bool bot)
     {
-        var spec = CarCatalog.Get(specIndex);
-        var car = new Car { Id = id, Name = name, ColorIndex = colorIndex, IsLocal = local, IsBot = bot, Spec = spec, SpecIndex = CarCatalog.IndexOf(spec.Id) };
-        car.Root = ProceduralCarFactory.CreateCar(_roundRoot, spec, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex)).transform;
+        specIndex = Mathf.Clamp(specIndex, 0, CarCatalog.All.Length - 1);
+        PlayerProfile.UnpackBuild(build, colorIndex, out var tune, out var look);
+        var spec = CarTuning.Apply(specIndex, tune);
+        var car = new Car { Id = id, Name = name, ColorIndex = colorIndex, IsLocal = local, IsBot = bot, Spec = spec, SpecIndex = specIndex, Build = build };
+        car.Root = ProceduralCarFactory.CreateCar(_roundRoot, spec, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex), look).transform;
         car.Rig = car.Root.GetComponent<ProceduralCarRig>();
         if (car.Rig != null) car.Rig.ReferenceSpeed = spec.TopSpeed * SpeedScale;
         car.Voice = GameAudio.Instance.AttachEngine(car.Root, local);
@@ -875,6 +887,34 @@ public sealed partial class ARDemoController
         var drop = car.Fall * car.Fall * 1.4f;
         car.Root.localPosition = new Vector3(car.Position.x, 0.002f - drop, car.Position.y);
         car.Root.localRotation = Quaternion.Euler(0f, car.Heading, 0f) * Quaternion.Euler(car.Fall * 70f, 0f, 0f);
+    }
+
+    // ------------------------------------------------------------------ garage rewards
+
+    /// <summary>
+    /// Pays garage coins: a few for every coin the player picks up, and a prize for the final
+    /// place in a race or battle. Works the same on the host and on guests (it reads the synced state).
+    /// </summary>
+    private void UpdateRewards()
+    {
+        if (_player == null) return;
+        var picked = _player.Coins - _coinsRewarded;
+        if (picked > 0)
+        {
+            var amount = picked * (_mode == GameMode.Free ? PlayerProfile.CoinPickupFree : PlayerProfile.CoinPickupRound);
+            PlayerProfile.Earn(amount);
+            _roundEarned += amount;
+            _earnFlashAt = Time.time;
+        }
+
+        _coinsRewarded = _player.Coins;
+        if (_prizeGiven || _state != GameState.Finished || _mode == GameMode.Free || _player.Place <= 0) return;
+        _prizeGiven = true;
+        _placePrize = _mode == GameMode.Race ? PlayerProfile.RaceReward(_player.Place, _cars.Count) : PlayerProfile.BattleReward(_player.Place, _cars.Count);
+        PlayerProfile.Earn(_placePrize);
+        _roundEarned += _placePrize;
+        _earnFlashAt = Time.time;
+        GameAudio.Instance.Play(GameAudio.Sfx.Coin);
     }
 
     // ------------------------------------------------------------------ coins

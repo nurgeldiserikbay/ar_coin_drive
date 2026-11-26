@@ -21,7 +21,7 @@ public sealed class LanSession : IDisposable
 
     public const int GamePort = 47777;
     public const int MaxPlayers = 4;
-    private const byte Version = 4;
+    private const byte Version = 5;
     private const byte Probe = (byte)'P';
     private const byte Offer = (byte)'O';
     private const byte JoinRequest = (byte)'J';
@@ -40,6 +40,7 @@ public sealed class LanSession : IDisposable
         public string Name;
         public int Color;
         public int CarType;
+        public int Build;   // upgrades and look, see PlayerProfile.PackBuild
         public float LastHeard;
         public float Drive;
         public float Steer;
@@ -59,6 +60,7 @@ public sealed class LanSession : IDisposable
     private readonly string _name;
     private readonly int _color;
     private readonly int _carType;
+    private readonly int _build;
     private IPEndPoint _host;
     private float _lastHeard;
     private float _nextScan;
@@ -84,12 +86,13 @@ public sealed class LanSession : IDisposable
     public int Slot { get; private set; }
     public int PlayerCount => Role == SessionRole.Host ? Peers.Count + 1 : 0;
 
-    private LanSession(SessionRole role, string name, int color, int carType)
+    private LanSession(SessionRole role, string name, int color, int carType, int build)
     {
         Role = role;
         _name = GameSettings.Clean(name);
         _color = color;
         _carType = carType;
+        _build = build;
         var locals = FindLocalAddresses();
         LocalAddress = locals.Count > 0 ? locals[0].ToString() : "unknown";
         _socket = role == SessionRole.Host ? new UdpClient(GamePort) : new UdpClient(0);
@@ -97,8 +100,8 @@ public sealed class LanSession : IDisposable
         if (role == SessionRole.Client) BuildScanTargets();
     }
 
-    public static LanSession Host(string name, int color, int carType = 0) => new LanSession(SessionRole.Host, name, color, carType);
-    public static LanSession Browse(string name, int color, int carType = 0) => new LanSession(SessionRole.Client, name, color, carType);
+    public static LanSession Host(string name, int color, int carType = 0, int build = 0) => new LanSession(SessionRole.Host, name, color, carType, build);
+    public static LanSession Browse(string name, int color, int carType = 0, int build = 0) => new LanSession(SessionRole.Client, name, color, carType, build);
 
     /// <summary>Also probe a specific address (manual address entry, tests).</summary>
     public void AddProbeTarget(IPEndPoint target) => _scanTargets.Insert(0, target);
@@ -220,6 +223,7 @@ public sealed class LanSession : IDisposable
                     Slot = FreeSlot(),
                     Color = data[2],
                     CarType = data[3],
+                    Build = data.Length >= 7 + nameLength ? data[5 + nameLength] | data[6 + nameLength] << 8 : 0,
                     Name = GameSettings.Clean(Encoding.UTF8.GetString(data, 5, nameLength))
                 };
                 Peers.Add(peer);
@@ -330,13 +334,15 @@ public sealed class LanSession : IDisposable
     private byte[] JoinPacket()
     {
         var name = Encoding.UTF8.GetBytes(_name);
-        var packet = new byte[5 + name.Length];
+        var packet = new byte[7 + name.Length];
         packet[0] = JoinRequest;
         packet[1] = Version;
         packet[2] = (byte)_color;
         packet[3] = (byte)_carType;
         packet[4] = (byte)name.Length;
         Buffer.BlockCopy(name, 0, packet, 5, name.Length);
+        packet[5 + name.Length] = (byte)(_build & 0xff);
+        packet[6 + name.Length] = (byte)(_build >> 8);
         return packet;
     }
 

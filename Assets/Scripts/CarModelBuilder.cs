@@ -28,10 +28,10 @@ public static class CarModelBuilder
         public bool Knobby;
     }
 
-    private static readonly Dictionary<(CarBody, float), Mesh> BodyMeshes = new Dictionary<(CarBody, float), Mesh>();
-    private static readonly Dictionary<(CarBody, float), Mesh> WheelMeshes = new Dictionary<(CarBody, float), Mesh>();
+    private static readonly Dictionary<(CarBody, float, int, bool), Mesh> BodyMeshes = new Dictionary<(CarBody, float, int, bool), Mesh>();
+    private static readonly Dictionary<(CarBody, float, int), Mesh> WheelMeshes = new Dictionary<(CarBody, float, int), Mesh>();
     private static readonly Dictionary<CarBody, Shape> Shapes = new Dictionary<CarBody, Shape>();
-    private static readonly Dictionary<Color, Material> Paints = new Dictionary<Color, Material>();
+    private static readonly Dictionary<(Color, int), Material> Paints = new Dictionary<(Color, int), Material>();
     private static Material _template;
     private static Mesh _shadowMesh;
     private static Material _shadowMaterial;
@@ -44,20 +44,22 @@ public static class CarModelBuilder
     private static readonly Color Lamp = new Color(1f, 0.96f, 0.86f);
     private static readonly Color TailLamp = new Color(0.85f, 0.04f, 0.04f);
 
-    public static GameObject Create(Transform parent, CarSpec spec, Color paint)
+    public static GameObject Create(Transform parent, CarSpec spec, Color paint) => Create(parent, spec, paint, CarLook.Stock(0));
+
+    public static GameObject Create(Transform parent, CarSpec spec, Color paint, CarLook look)
     {
         var shape = GetShape(spec.Body);
         var root = new GameObject(spec.Name);
         root.transform.SetParent(parent, false);
         CreateContactShadow(root.transform, shape);
-        var material = PaintMaterial(paint);
+        var material = PaintMaterial(paint, look.Finish);
 
         var body = new GameObject("Body");
         body.transform.SetParent(root.transform, false);
-        body.AddComponent<MeshFilter>().sharedMesh = GetBodyMesh(spec.Body);
+        body.AddComponent<MeshFilter>().sharedMesh = GetBodyMesh(spec.Body, CarCatalog.Scale, look.Spoiler, look.Stripes);
         body.AddComponent<MeshRenderer>().sharedMaterial = material;
 
-        var wheelMesh = GetWheelMesh(spec.Body);
+        var wheelMesh = GetWheelMesh(spec.Body, CarCatalog.Scale, look.Rim);
         var s = CarCatalog.Scale;
         var pivots = new List<Transform>();
         var spinners = new List<Transform>();
@@ -131,9 +133,9 @@ public static class CarModelBuilder
         return new Vector3(0f, front.Top + 0.12f, front.Z + 0.05f) * CarCatalog.Scale;
     }
 
-    private static Material PaintMaterial(Color paint)
+    public static Material PaintMaterial(Color paint, int finish = 0)
     {
-        if (Paints.TryGetValue(paint, out var cached) && cached != null) return cached;
+        if (Paints.TryGetValue((paint, finish), out var cached) && cached != null) return cached;
         if (_template == null) _template = Resources.Load<Material>("ARCoinDriveCar");
         Material material;
         if (_template != null) material = new Material(_template);
@@ -147,7 +149,10 @@ public static class CarModelBuilder
         material.name = "Car Paint " + ColorUtility.ToHtmlStringRGB(paint);
         material.enableInstancing = true;
         material.SetColor("_PaintColor", paint);
-        Paints[paint] = material;
+        // Finish: gloss clear coat, metallic flake, or flat matte.
+        material.SetFloat("_PaintGloss", finish == 2 ? 0.22f : finish == 1 ? 0.80f : 0.86f);
+        material.SetFloat("_PaintMetal", finish == 2 ? 0.02f : finish == 1 ? 0.85f : 0.35f);
+        Paints[(paint, finish)] = material;
         return material;
     }
 
@@ -260,9 +265,9 @@ public static class CarModelBuilder
 
     // ------------------------------------------------------------------ body mesh
 
-    private static Mesh GetBodyMesh(CarBody body, float scale = CarCatalog.Scale)
+    private static Mesh GetBodyMesh(CarBody body, float scale = CarCatalog.Scale, int spoiler = 1, bool stripes = false)
     {
-        if (BodyMeshes.TryGetValue((body, scale), out var mesh)) return mesh;
+        if (BodyMeshes.TryGetValue((body, scale, spoiler, stripes), out var mesh)) return mesh;
         var shape = GetShape(body);
         var b = new PartMeshBuilder();
 
@@ -289,10 +294,12 @@ public static class CarModelBuilder
         AddWheelArches(b, shape);
         AddLights(b, shape);
         AddCommonDetails(b, shape);
-        AddCharacter(b, body, shape);
+        AddCharacter(b, body, shape, spoiler == 1, stripes);
+        if (spoiler == 2) AddRaceWing(b, shape);
+        if (stripes && body != CarBody.Muscle) AddStripes(b, shape);
 
         mesh = b.Build(body + " Body", scale);
-        BodyMeshes[(body, scale)] = mesh;
+        BodyMeshes[(body, scale, spoiler, stripes)] = mesh;
         return mesh;
     }
 
@@ -363,21 +370,26 @@ public static class CarModelBuilder
     }
 
     /// <summary>The details that give each class its own character.</summary>
-    private static void AddCharacter(PartMeshBuilder b, CarBody body, Shape shape)
+    private static void AddCharacter(PartMeshBuilder b, CarBody body, Shape shape, bool stockSpoiler, bool stripes)
     {
         var tail = shape.Body[shape.Body.Length - 2];
         switch (body)
         {
             case CarBody.Tuner:
-                // Tall rear wing on two struts.
+                if (stockSpoiler)
+                {
+                    // Tall rear wing on two struts.
+                    b.Part(Trim, 0.5f, 0.2f);
+                    foreach (var side in new[] { -0.45f, 0.45f })
+                        b.Box(new Vector3(side, tail.Top + 0.10f, tail.Z + 0.10f), new Vector3(0.05f, 0.22f, 0.10f));
+                    b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+                    b.Box(new Vector3(0f, tail.Top + 0.22f, tail.Z + 0.06f), new Vector3(1.62f, 0.035f, 0.30f), Matrix4x4.Rotate(Quaternion.Euler(-8f, 0f, 0f)));
+                    b.Part(Trim, 0.5f, 0.2f);
+                    foreach (var side in new[] { -0.81f, 0.81f })
+                        b.Box(new Vector3(side, tail.Top + 0.20f, tail.Z + 0.06f), new Vector3(0.02f, 0.14f, 0.34f));
+                }
+
                 b.Part(Trim, 0.5f, 0.2f);
-                foreach (var side in new[] { -0.45f, 0.45f })
-                    b.Box(new Vector3(side, tail.Top + 0.10f, tail.Z + 0.10f), new Vector3(0.05f, 0.22f, 0.10f));
-                b.Part(Color.white, 0.86f, 0.35f, 0f, true);
-                b.Box(new Vector3(0f, tail.Top + 0.22f, tail.Z + 0.06f), new Vector3(1.62f, 0.035f, 0.30f), Matrix4x4.Rotate(Quaternion.Euler(-8f, 0f, 0f)));
-                b.Part(Trim, 0.5f, 0.2f);
-                foreach (var side in new[] { -0.81f, 0.81f })
-                    b.Box(new Vector3(side, tail.Top + 0.20f, tail.Z + 0.06f), new Vector3(0.02f, 0.14f, 0.34f));
                 // Front lip spoiler.
                 b.Box(new Vector3(0f, shape.Body[1].Bottom - 0.02f, shape.Body[1].Z - 0.02f), new Vector3(1.4f, 0.03f, 0.18f));
                 break;
@@ -386,10 +398,14 @@ public static class CarModelBuilder
                 // Hood scoop, ducktail and twin stripes.
                 b.Part(Trim, 0.6f, 0.2f);
                 b.Box(new Vector3(0f, 0.88f, 1.05f), new Vector3(0.55f, 0.10f, 0.70f));
-                b.Part(Color.white, 0.86f, 0.35f, 0f, true);
-                b.Box(new Vector3(0f, tail.Top + 0.03f, tail.Z + 0.05f), new Vector3(1.6f, 0.05f, 0.22f), Matrix4x4.Rotate(Quaternion.Euler(-12f, 0f, 0f)));
+                if (stockSpoiler)
+                {
+                    b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+                    b.Box(new Vector3(0f, tail.Top + 0.03f, tail.Z + 0.05f), new Vector3(1.6f, 0.05f, 0.22f), Matrix4x4.Rotate(Quaternion.Euler(-12f, 0f, 0f)));
+                }
+
                 b.Part(new Color(0.95f, 0.95f, 0.93f), 0.8f, 0.1f);
-                foreach (var x in new[] { -0.16f, 0.16f })
+                foreach (var x in stripes ? new[] { -0.16f, 0.16f } : new float[0])
                 {
                     var stripe = new List<Station>();
                     foreach (var s in Resample(shape.Body, 6))
@@ -405,10 +421,14 @@ public static class CarModelBuilder
                 foreach (var side in new[] { -1f, 1f })
                     b.Ellipsoid(new Vector3(side * 0.96f, 0.52f, -0.55f), new Vector3(0.05f, 0.16f, 0.45f));
                 b.Box(new Vector3(0f, 0.22f, -2.20f), new Vector3(1.4f, 0.12f, 0.12f));
-                foreach (var side in new[] { -0.4f, 0.4f })
-                    b.Box(new Vector3(side, tail.Top + 0.12f, tail.Z + 0.2f), new Vector3(0.04f, 0.26f, 0.12f));
-                b.Part(Color.white, 0.86f, 0.35f, 0f, true);
-                b.Box(new Vector3(0f, tail.Top + 0.26f, tail.Z + 0.12f), new Vector3(1.85f, 0.035f, 0.36f), Matrix4x4.Rotate(Quaternion.Euler(-6f, 0f, 0f)));
+                if (stockSpoiler)
+                {
+                    foreach (var side in new[] { -0.4f, 0.4f })
+                        b.Box(new Vector3(side, tail.Top + 0.12f, tail.Z + 0.2f), new Vector3(0.04f, 0.26f, 0.12f));
+                    b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+                    b.Box(new Vector3(0f, tail.Top + 0.26f, tail.Z + 0.12f), new Vector3(1.85f, 0.035f, 0.36f), Matrix4x4.Rotate(Quaternion.Euler(-6f, 0f, 0f)));
+                }
+
                 b.Part(Chrome, 0.85f, 0.95f);
                 foreach (var x in new[] { -0.12f, 0.12f })
                     b.Cylinder(new Vector3(x, 0.32f, -2.10f), new Vector3(x, 0.32f, -2.30f), 0.055f, 12);
@@ -423,8 +443,12 @@ public static class CarModelBuilder
                 b.Part(Lamp, 0.95f, 0.1f, 0.9f);
                 for (var i = 0; i < 4; i++)
                     b.Ellipsoid(new Vector3(-0.42f + i * 0.28f, nose.Top - 0.02f, nose.Z + 0.10f), new Vector3(0.11f, 0.11f, 0.03f));
-                b.Part(Color.white, 0.86f, 0.35f, 0f, true);
-                b.Box(new Vector3(0f, 1.44f, -1.92f), new Vector3(1.40f, 0.05f, 0.22f), Matrix4x4.Rotate(Quaternion.Euler(10f, 0f, 0f)));
+                if (stockSpoiler)
+                {
+                    b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+                    b.Box(new Vector3(0f, 1.44f, -1.92f), new Vector3(1.40f, 0.05f, 0.22f), Matrix4x4.Rotate(Quaternion.Euler(10f, 0f, 0f)));
+                }
+
                 b.Part(Trim, 0.2f, 0f);
                 foreach (var side in new[] { -1f, 1f })
                     b.Box(new Vector3(side * shape.Track, 0.20f, shape.RearAxle - shape.WheelRadius - 0.06f), new Vector3(0.26f, 0.28f, 0.02f));
@@ -450,12 +474,59 @@ public static class CarModelBuilder
         }
     }
 
+    /// <summary>Big GT wing on swan-neck mounts (the GT WING option, any car).</summary>
+    private static void AddRaceWing(PartMeshBuilder b, Shape shape)
+    {
+        var tail = shape.Body[shape.Body.Length - 2];
+        var top = tail.Top + 0.34f;
+        b.Part(Trim, 0.5f, 0.3f);
+        foreach (var side in new[] { -0.38f, 0.38f })
+            b.Box(new Vector3(side, tail.Top + 0.17f, tail.Z + 0.12f), new Vector3(0.04f, 0.36f, 0.14f), Matrix4x4.Rotate(Quaternion.Euler(-10f, 0f, 0f)));
+        b.Box(new Vector3(0f, top, tail.Z + 0.04f), new Vector3(1.95f, 0.04f, 0.38f), Matrix4x4.Rotate(Quaternion.Euler(-10f, 0f, 0f)));
+        b.Part(Color.white, 0.86f, 0.35f, 0f, true);
+        foreach (var side in new[] { -0.98f, 0.98f })
+            b.Box(new Vector3(side, top - 0.04f, tail.Z + 0.04f), new Vector3(0.025f, 0.22f, 0.46f));
+    }
+
+    /// <summary>Twin white racing stripes over the bonnet, roof and boot.</summary>
+    private static void AddStripes(PartMeshBuilder b, Shape shape)
+    {
+        b.Part(new Color(0.95f, 0.95f, 0.93f), 0.8f, 0.1f);
+        var noseZ = shape.Body[1].Z;
+        var tailZ = shape.Body[shape.Body.Length - 2].Z;
+        var screenZ = shape.Cabin[0].Z;
+        var rearZ = shape.Cabin[shape.Cabin.Length - 1].Z;
+        foreach (var x in new[] { -0.15f, 0.15f })
+        {
+            var offset = Matrix4x4.Translate(new Vector3(x, 0f, 0f));
+            var bonnet = new List<Station>();
+            var boot = new List<Station>();
+            foreach (var s in Resample(shape.Body, 6))
+            {
+                if (s.Z < noseZ && s.Z > screenZ + 0.05f) bonnet.Add(new Station(s.Z, 0.065f, s.Top - 0.01f, s.Top + 0.006f));
+                else if (s.Z < rearZ - 0.05f && s.Z > tailZ) boot.Add(new Station(s.Z, 0.065f, s.Top - 0.01f, s.Top + 0.006f));
+            }
+
+            if (bonnet.Count >= 2) b.Loft(bonnet, 2.5f, 10, offset);
+            if (boot.Count >= 2) b.Loft(boot, 2.5f, 10, offset);
+            var roof = new List<Station>();
+            foreach (var s in Resample(shape.Cabin, 8))
+                if (s.Z < shape.RoofFront && s.Z > shape.RoofRear)
+                    roof.Add(new Station(s.Z, 0.065f, s.Top + 0.002f, s.Top + 0.018f));
+            if (roof.Count >= 2) b.Loft(roof, 2.5f, 10, offset);
+        }
+    }
+
     // ------------------------------------------------------------------ wheels
 
-    private static Mesh GetWheelMesh(CarBody body, float scale = CarCatalog.Scale)
+    private static Mesh GetWheelMesh(CarBody body, float scale = CarCatalog.Scale, int rimStyle = 0)
     {
-        if (WheelMeshes.TryGetValue((body, scale), out var mesh)) return mesh;
+        if (WheelMeshes.TryGetValue((body, scale, rimStyle), out var mesh)) return mesh;
         var shape = GetShape(body);
+        // Rim options: stock (the class's own), sport 5-spoke silver, mesh 10-spoke, black deep dish.
+        var rimColor = rimStyle == 1 ? new Color(0.78f, 0.79f, 0.82f) : rimStyle == 2 ? new Color(0.70f, 0.62f, 0.40f)
+            : rimStyle == 3 ? new Color(0.06f, 0.06f, 0.07f) : shape.RimColor;
+        var spokes = rimStyle == 1 ? 5 : rimStyle == 2 ? 12 : rimStyle == 3 ? 6 : shape.Spokes;
         var b = new PartMeshBuilder();
         var r = shape.WheelRadius;
         var half = shape.TyreWidth * 0.5f;
@@ -471,22 +542,31 @@ public static class CarModelBuilder
         b.Box(new Vector3(half - 0.07f, rimRadius * 0.62f, 0f), new Vector3(0.06f, rimRadius * 0.35f, rimRadius * 0.45f));
 
         // Rim: barrel lip, spokes and centre cap.
-        b.Part(shape.RimColor, 0.75f, 0.85f);
+        b.Part(rimColor, rimStyle == 3 ? 0.6f : 0.75f, rimStyle == 3 ? 0.2f : 0.85f);
         b.Lathe(new[]
         {
             new Vector2(-half + 0.02f, rimRadius), new Vector2(half - 0.01f, rimRadius),
             new Vector2(half, rimRadius * 0.95f), new Vector2(half - 0.025f, rimRadius * 0.92f)
         }, 32, Matrix4x4.identity);
-        for (var i = 0; i < shape.Spokes; i++)
+        // Deep dish: spokes sit back from a wide polished lip.
+        var spokeX = rimStyle == 3 ? half - 0.09f : half - 0.03f;
+        for (var i = 0; i < spokes; i++)
         {
-            var matrix = Matrix4x4.Rotate(Quaternion.AngleAxis(360f / shape.Spokes * i, Vector3.right));
-            b.Box(new Vector3(half - 0.03f, rimRadius * 0.5f, 0f), new Vector3(0.03f, rimRadius * 0.85f, shape.Spokes > 7 ? 0.03f : 0.055f), matrix);
+            var matrix = Matrix4x4.Rotate(Quaternion.AngleAxis(360f / spokes * i, Vector3.right));
+            b.Box(new Vector3(spokeX, rimRadius * 0.5f, 0f), new Vector3(0.03f, rimRadius * 0.85f, spokes > 7 ? 0.028f : 0.055f), matrix);
+        }
+
+        if (rimStyle == 3)
+        {
+            b.Part(Chrome, 0.9f, 0.95f);
+            b.Lathe(new[] { new Vector2(half - 0.09f, rimRadius * 0.86f), new Vector2(half + 0.002f, rimRadius * 0.98f), new Vector2(half - 0.005f, rimRadius * 1.0f), new Vector2(half - 0.09f, rimRadius * 0.9f) }, 32, Matrix4x4.identity);
+            b.Part(rimColor, 0.6f, 0.2f);
         }
 
         b.Lathe(new[] { new Vector2(half - 0.05f, 0.001f), new Vector2(half - 0.05f, rimRadius * 0.22f), new Vector2(half - 0.01f, rimRadius * 0.2f), new Vector2(half - 0.005f, 0.001f) }, 16, Matrix4x4.identity);
 
         mesh = b.Build(body + " Wheel", scale);
-        WheelMeshes[(body, scale)] = mesh;
+        WheelMeshes[(body, scale, rimStyle)] = mesh;
         return mesh;
     }
 

@@ -88,3 +88,61 @@ public static class CarCatalog
         return 0;
     }
 }
+
+/// <summary>How a car looks: paint, finish, rims, spoiler and stripes (all purely visual).</summary>
+public struct CarLook
+{
+    public static readonly string[] FinishNames = { "GLOSS", "METALLIC", "MATTE" };
+    public static readonly string[] RimNames = { "STOCK", "SPORT", "MESH", "DEEP DISH" };
+    public static readonly string[] SpoilerNames = { "NONE", "STOCK", "GT WING" };
+
+    public int Paint;
+    public int Finish;
+    public int Rim;
+    public int Spoiler;
+    public bool Stripes;
+
+    public static CarLook Stock(int paint) => new CarLook { Paint = paint, Spoiler = 1 };
+}
+
+/// <summary>Performance upgrades, each 0..3.</summary>
+public struct CarTune
+{
+    public const int MaxLevel = 3;
+    public int Engine;
+    public int Tyres;
+    public int Weight;
+}
+
+public static class CarTuning
+{
+    private static readonly System.Collections.Generic.Dictionary<(int, int, int, int), CarSpec> Cache =
+        new System.Collections.Generic.Dictionary<(int, int, int, int), CarSpec>();
+
+    /// <summary>
+    /// The car's stats with its upgrades applied: engine adds top speed and acceleration, tyres
+    /// add grip, steering and off-road pace, weight reduction adds acceleration and steering but
+    /// makes the car easier to push around in battle.
+    /// </summary>
+    public static CarSpec Apply(int specIndex, CarTune tune)
+    {
+        var key = (specIndex, tune.Engine, tune.Tyres, tune.Weight);
+        if (Cache.TryGetValue(key, out var tuned)) return tuned;
+        var b = CarCatalog.Get(specIndex);
+        tuned = new CarSpec
+        {
+            Id = b.Id, Name = b.Name, Class = b.Class, Body = b.Body, DefaultColor = b.DefaultColor,
+            TopSpeed = b.TopSpeed * (1f + 0.04f * tune.Engine),
+            Acceleration = b.Acceleration * (1f + 0.06f * tune.Engine + 0.03f * tune.Weight),
+            TurnRate = b.TurnRate * (1f + 0.03f * tune.Tyres + 0.02f * tune.Weight),
+            Grip = b.Grip * (1f + 0.08f * tune.Tyres),
+            Drift = b.Drift,
+            Mass = b.Mass * (1f - 0.05f * tune.Weight),
+            OffRoad = Mathf.Min(1f, b.OffRoad * (1f + 0.04f * tune.Tyres)),
+            HalfWidth = b.HalfWidth,
+            HalfLength = b.HalfLength
+        };
+        Cache[key] = tuned;
+        return tuned;
+    }
+}

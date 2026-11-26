@@ -32,7 +32,15 @@ public static class ProceduralCarFactory
     {
         return spec.Body == CarBody.Buggy
             ? ProceduralCarModel.Create(parent, paint, trim)
-            : CarModelBuilder.Create(parent, spec, paint);
+            : CarModelBuilder.Create(parent, spec, paint, CarLook.Stock(0));
+    }
+
+    /// <summary>A catalogue car with its look (rims, spoiler, stripes, finish; the RC buggy takes paint only).</summary>
+    public static GameObject CreateCar(Transform parent, CarSpec spec, Color paint, Color trim, CarLook look)
+    {
+        return spec.Body == CarBody.Buggy
+            ? ProceduralCarModel.Create(parent, paint, trim)
+            : CarModelBuilder.Create(parent, spec, paint, look);
     }
 
     /// <summary>Footprint of an obstacle placed at a floor point with a heading.</summary>

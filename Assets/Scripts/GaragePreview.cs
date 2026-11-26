@@ -16,6 +16,7 @@ public sealed class GaragePreview
     private GameObject _car;
     private int _shownSpec = -1;
     private int _shownColor = -1;
+    private int _shownBuild = -1;
     private float _angle = 210f;
 
     public Texture Texture => _texture;
@@ -52,7 +53,11 @@ public sealed class GaragePreview
     }
 
     /// <summary>Renders the given car into the preview texture for a frame of the given size.</summary>
-    public void Show(int specIndex, int colorIndex, Vector2 size, float dt, float dragDegrees)
+    public void Show(int specIndex, int colorIndex, Vector2 size, float dt, float dragDegrees) =>
+        Show(specIndex, colorIndex, PlayerProfile.BuildOf(specIndex), size, dt, dragDegrees);
+
+    /// <summary>Renders a car with the given upgrades/look code (see PlayerProfile.PackBuild).</summary>
+    public void Show(int specIndex, int colorIndex, int build, Vector2 size, float dt, float dragDegrees)
     {
         var width = Mathf.Clamp(Mathf.RoundToInt(size.x), 64, 1024);
         var height = Mathf.Clamp(Mathf.RoundToInt(size.y), 64, 1024);
@@ -63,7 +68,7 @@ public sealed class GaragePreview
             _camera.targetTexture = _texture;
         }
 
-        if (specIndex != _shownSpec || colorIndex != _shownColor)
+        if (specIndex != _shownSpec || colorIndex != _shownColor || build != _shownBuild)
         {
             if (_car != null)
             {
@@ -72,11 +77,13 @@ public sealed class GaragePreview
                 Object.Destroy(_car);
             }
             var spec = CarCatalog.Get(specIndex);
-            _car = ProceduralCarFactory.CreateCar(_root.transform, spec, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex));
+            PlayerProfile.UnpackBuild(build, colorIndex, out _, out var look);
+            _car = ProceduralCarFactory.CreateCar(_root.transform, spec, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex), look);
             foreach (var t in _car.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = Layer;
             foreach (var source in _car.GetComponentsInChildren<AudioSource>()) Object.Destroy(source);
             _shownSpec = specIndex;
             _shownColor = colorIndex;
+            _shownBuild = build;
         }
 
         // Slow turntable; a drag spins it by hand.

@@ -133,6 +133,7 @@ public sealed partial class ARDemoController
         y += rowHeight + U(10f);
         _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor]
             + " " + CarCatalog.Get(GameSettings.CarType).Name, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
+        CoinChip(new Rect(area.xMax - U(130f), area.y, U(130f), U(36f)));
     }
 
     // ------------------------------------------------------------------ garage
@@ -143,10 +144,19 @@ public sealed partial class ARDemoController
     private Vector2 _garageLastTouch;
     private bool _garageDragging;
 
+    private int _garageView;
+    private int _garageTab;
+    private string _garageNote;
+    private float _garageNoteAt = -10f;
+    private bool _garageNoteBad;
+
     private void OpenGarage(UiScreen returnTo)
     {
         _garageReturn = returnTo;
         _screen = UiScreen.Garage;
+        _garageView = GameSettings.CarType;
+        _garageTab = 0;
+        _garageNote = null;
         if (_garage == null) _garage = new GaragePreview();
     }
 
@@ -155,9 +165,29 @@ public sealed partial class ARDemoController
         _garage?.Release();
         _screen = _garageReturn;
         GameSettings.Save();
-        // A new car takes effect at the next round when nobody is mid-race.
-        if (_arena != null && !IsClient && _player != null && _player.SpecIndex != GameSettings.CarType)
+        // A new car, upgrade or look takes effect with a fresh round (host or offline only).
+        if (_arena != null && !IsClient && _player != null
+            && (_player.SpecIndex != GameSettings.CarType || _player.Build != PlayerProfile.BuildOf(GameSettings.CarType)
+                || _player.ColorIndex != GameSettings.CarColor))
             StartRound();
+    }
+
+    private void GarageNote(string text, bool bad)
+    {
+        _garageNote = text;
+        _garageNoteAt = Time.unscaledTime;
+        _garageNoteBad = bad;
+        if (_ui.Drawing) return;
+        if (bad) GameAudio.Instance.Play(GameAudio.Sfx.Bump, 0.4f);
+        else GameAudio.Instance.Play(GameAudio.Sfx.Coin);
+    }
+
+    /// <summary>Coin balance: a small panel with the coin icon.</summary>
+    private void CoinChip(Rect rect)
+    {
+        _ui.Panel(rect);
+        _ui.Icon(new Rect(rect.x + U(8f), rect.center.y - U(11f), U(22f), U(22f)), UiIcon.Coin, UiKit.AccentColor);
+        _ui.Text(new Rect(rect.x + U(34f), rect.y, rect.width - U(40f), rect.height), PlayerProfile.Coins.ToString("N0"), 15, TextAnchor.MiddleLeft, Color.white, true);
     }
 
     private void GarageScreen()
@@ -168,29 +198,34 @@ public sealed partial class ARDemoController
         Rect info;
         if (Landscape)
         {
-            preview = new Rect(area.x, area.y + U(40f), area.width * 0.58f, area.height - U(40f));
-            info = new Rect(preview.xMax + U(16f), area.y + U(40f), area.width - preview.width - U(16f), area.height - U(40f));
+            preview = new Rect(area.x, area.y + U(40f), area.width * 0.54f, area.height - U(40f));
+            info = new Rect(preview.xMax + U(14f), area.y + U(44f), area.width - preview.width - U(14f), area.height - U(44f));
         }
         else
         {
             // The info panel takes what its content needs; the car gets the rest of the screen.
-            var infoHeight = U(300f);
+            var infoHeight = Mathf.Min(U(390f), area.height * 0.6f);
             preview = new Rect(area.x, area.y + U(40f), area.width, area.height - U(50f) - infoHeight);
             info = new Rect(area.x, area.yMax - infoHeight, area.width, infoHeight);
         }
 
         _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "GARAGE", 22, TextAnchor.MiddleLeft, Color.white, true);
         if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "DONE", UiKit.Look.Primary)) CloseGarage();
+        CoinChip(new Rect(area.xMax - U(240f), area.y, U(120f), U(36f)));
 
-        var index = GameSettings.CarType;
-        var spec = CarCatalog.Get(index);
+        var count = CarCatalog.All.Length;
+        var index = Mathf.Clamp(_garageView, 0, count - 1);
+        var owned = PlayerProfile.Owns(index);
+        var baseSpec = CarCatalog.Get(index);
+        var spec = PlayerProfile.Spec(index);
+        var look = PlayerProfile.Look(index);
 
         // Turntable render (input pass only: rendering belongs in Update, not OnGUI).
         if (!_ui.Drawing && _garage != null)
         {
             var drag = 0f;
-            var count = _ui.FreeFingers(out var finger, out _);
-            if (count == 1 && preview.Contains(finger))
+            var fingers = _ui.FreeFingers(out var finger, out _);
+            if (fingers == 1 && preview.Contains(finger))
             {
                 if (_garageDragging) drag = (finger.x - _garageLastTouch.x) * 0.4f;
                 _garageLastTouch = finger;
@@ -199,47 +234,172 @@ public sealed partial class ARDemoController
             else _garageDragging = false;
 
             _garageDrag = drag;
-            _garage.Show(index, GameSettings.CarColor, preview.size, Time.unscaledDeltaTime, drag);
+            _garage.Show(index, look.Paint, PlayerProfile.BuildOf(index), preview.size, Time.unscaledDeltaTime, drag);
         }
 
-        if (_garage != null && _garage.Texture != null) _ui.Image(preview, _garage.Texture);
+        if (_garage != null && _garage.Texture != null) _ui.Image(preview, _garage.Texture, owned ? 1f : 0.55f);
+        if (!owned)
+            _ui.Text(new Rect(preview.x, preview.y + U(8f), preview.width, U(30f)), "LOCKED", 18, TextAnchor.MiddleCenter, Color.white, true, true);
 
-        // Arrows to switch cars.
+        // Arrows browse the cars; browsing onto a car you own selects it.
         var arrow = U(54f);
-        if (_ui.IconButton(new Rect(preview.x, preview.center.y - arrow * 0.5f, arrow, arrow), UiIcon.Back))
-            GameSettings.CarType = (index + CarCatalog.All.Length - 1) % CarCatalog.All.Length;
-        if (_ui.IconButton(new Rect(preview.xMax - arrow, preview.center.y - arrow * 0.5f, arrow, arrow), UiIcon.Play))
-            GameSettings.CarType = (index + 1) % CarCatalog.All.Length;
-        // Page dots for the car list, and a hint.
+        var next = index;
+        if (_ui.IconButton(new Rect(preview.x, preview.center.y - arrow * 0.5f, arrow, arrow), UiIcon.Back)) next = (index + count - 1) % count;
+        if (_ui.IconButton(new Rect(preview.xMax - arrow, preview.center.y - arrow * 0.5f, arrow, arrow), UiIcon.Play)) next = (index + 1) % count;
+        if (next != index)
+        {
+            _garageView = next;
+            if (PlayerProfile.Owns(next)) GameSettings.CarType = next;
+            else _garageTab = 0;
+            _garageNote = null;
+        }
+
+        // Page dots (the selected car's dot is orange, locked cars are faint) and a hint.
         var dot = U(8f);
-        var dotsWidth = CarCatalog.All.Length * dot * 2f;
-        for (var i = 0; i < CarCatalog.All.Length; i++)
+        var dotsWidth = count * dot * 2f;
+        for (var i = 0; i < count; i++)
             _ui.Fill(new Rect(preview.center.x - dotsWidth * 0.5f + i * dot * 2f, preview.yMax - U(30f), dot, dot * 0.5f),
-                i == index ? UiKit.AccentColor : new Color(1f, 1f, 1f, 0.25f));
+                i == index ? UiKit.AccentColor : PlayerProfile.Owns(i) ? new Color(1f, 1f, 1f, 0.45f) : new Color(1f, 1f, 1f, 0.14f));
         _ui.Text(new Rect(preview.x, preview.yMax - U(22f), preview.width, U(18f)), "drag to rotate", 11, TextAnchor.MiddleCenter, UiKit.TextDim);
 
         _ui.Panel(info);
         var inner = Inset(info, U(14f));
         var y = inner.y;
-        _ui.Text(new Rect(inner.x, y, inner.width, U(30f)), spec.Name.ToUpperInvariant(), 22, TextAnchor.MiddleLeft, Color.white, true);
-        y += U(30f);
+        _ui.Text(new Rect(inner.x, y, inner.width, U(28f)), spec.Name.ToUpperInvariant(), 21, TextAnchor.MiddleLeft, Color.white, true);
+        var selected = owned && GameSettings.CarType == index;
+        _ui.Text(new Rect(inner.x, y, inner.width, U(28f)), selected ? "SELECTED" : owned ? "OWNED" : "", 11, TextAnchor.MiddleRight, selected ? new Color(0.45f, 1f, 0.5f) : UiKit.TextDim, true);
+        y += U(26f);
         _ui.Text(new Rect(inner.x, y, inner.width, U(20f)), spec.Class, 13, TextAnchor.MiddleLeft, UiKit.AccentColor);
-        y += U(30f);
-        var barRow = Mathf.Clamp((inner.height - U(170f)) / 4f, U(18f), U(28f));
-        StatBar(inner.x, ref y, inner.width, barRow, "Speed", spec.SpeedRating);
-        StatBar(inner.x, ref y, inner.width, barRow, "Acceleration", spec.AccelRating);
-        StatBar(inner.x, ref y, inner.width, barRow, "Handling", spec.HandlingRating);
-        StatBar(inner.x, ref y, inner.width, barRow, "Weight", spec.WeightRating);
-        var trait = spec.Drift > 0.6f ? "Loves to drift." : spec.Mass > 1.3f ? "Heavy: hard to push out in battle." : spec.OffRoad > 0.85f ? "Keeps its speed off the road." : spec.Grip > 13f ? "Glued to the road." : "Balanced.";
-        _ui.Text(new Rect(inner.x, y, inner.width, U(20f)), trait, 12, TextAnchor.MiddleLeft, UiKit.TextDim);
-        y += U(28f);
+        y += U(26f);
 
-        var swatch = Mathf.Min(U(34f), (inner.width - U(6f) * GameSettings.CarColors.Length) / GameSettings.CarColors.Length);
-        for (var i = 0; i < GameSettings.CarColors.Length; i++)
+        // The note line (purchases, not enough coins) sits at the bottom of the panel.
+        var noteHeight = U(20f);
+        var bottom = inner.yMax - noteHeight;
+        if (_garageNote != null && Time.unscaledTime - _garageNoteAt < 2.5f)
+            _ui.Text(new Rect(inner.x, bottom, inner.width, noteHeight), _garageNote, 12, TextAnchor.MiddleCenter,
+                _garageNoteBad ? new Color(1f, 0.45f, 0.4f) : new Color(0.45f, 1f, 0.5f), true);
+
+        if (!owned)
         {
-            var rect = new Rect(inner.x + i * (swatch + U(6f)), y, swatch, swatch);
-            if (_ui.Swatch(rect, GameSettings.CarColors[i], GameSettings.CarColor == i)) GameSettings.CarColor = i;
+            GarageStats(inner.x, ref y, inner.width, bottom - U(56f) - y, baseSpec, spec);
+            var price = PlayerProfile.CarPrice(index);
+            var affordable = PlayerProfile.Coins >= price;
+            if (_ui.Button(new Rect(inner.x, bottom - U(50f), inner.width, U(46f)), "BUY  " + price.ToString("N0"),
+                    affordable ? UiKit.Look.Primary : UiKit.Look.Ghost, false, 16, UiIcon.Coin))
+            {
+                if (PlayerProfile.TryBuyCar(index))
+                {
+                    GameSettings.CarType = index;
+                    GarageNote(spec.Name + " is yours!", false);
+                }
+                else GarageNote("Not enough coins: race and collect coins to earn more.", true);
+            }
+
+            return;
         }
+
+        _garageTab = _ui.Segmented(new Rect(inner.x, y, inner.width, U(34f)), new[] { "STATS", "TUNE", "STYLE" }, _garageTab, 12);
+        y += U(42f);
+        var room = bottom - y;
+        if (_garageTab == 0) GarageStats(inner.x, ref y, inner.width, room, baseSpec, spec);
+        else if (_garageTab == 1) GarageTune(index, inner.x, y, inner.width, room);
+        else GarageStyle(index, look, baseSpec.Body, inner.x, y, inner.width, room);
+    }
+
+    private void GarageStats(float x, ref float y, float width, float room, CarSpec baseSpec, CarSpec spec)
+    {
+        var barRow = Mathf.Clamp((room - U(28f)) / 4f - U(4f), U(16f), U(28f));
+        StatBar(x, ref y, width, barRow, "Speed", spec.SpeedRating, baseSpec.SpeedRating);
+        StatBar(x, ref y, width, barRow, "Acceleration", spec.AccelRating, baseSpec.AccelRating);
+        StatBar(x, ref y, width, barRow, "Handling", spec.HandlingRating, baseSpec.HandlingRating);
+        StatBar(x, ref y, width, barRow, "Weight", spec.WeightRating, spec.WeightRating);
+        var trait = spec.Drift > 0.6f ? "Loves to drift." : spec.Mass > 1.3f ? "Heavy: hard to push out in battle." : spec.OffRoad > 0.85f ? "Keeps its speed off the road." : spec.Grip > 13f ? "Glued to the road." : "Balanced.";
+        _ui.Text(new Rect(x, y, width, U(20f)), trait, 12, TextAnchor.MiddleLeft, UiKit.TextDim);
+        y += U(24f);
+    }
+
+    private static readonly string[] UpgradeNames = { "ENGINE", "TYRES", "WEIGHT" };
+    private static readonly string[] UpgradeHints = { "top speed + acceleration", "grip + steering + off-road", "acceleration + steering, lighter in battle" };
+
+    private void GarageTune(int car, float x, float y, float width, float room)
+    {
+        var row = Mathf.Clamp(room / 3f - U(6f), U(40f), U(64f));
+        var buttonWidth = Mathf.Min(U(130f), width * 0.38f);
+        for (var i = 0; i < 3; i++)
+        {
+            var upgrade = (PlayerProfile.Upgrade)i;
+            var level = PlayerProfile.Level(car, upgrade);
+            var cost = PlayerProfile.UpgradeCost(car, upgrade);
+            _ui.Text(new Rect(x, y, width - buttonWidth, row * 0.5f), UpgradeNames[i], 15, TextAnchor.LowerLeft, Color.white, true);
+            _ui.Text(new Rect(x, y + row * 0.5f, width - buttonWidth - U(8f), row * 0.5f), UpgradeHints[i], 11, TextAnchor.UpperLeft, UiKit.TextDim);
+            // Level pips.
+            var pip = U(16f);
+            for (var p = 0; p < CarTune.MaxLevel; p++)
+                _ui.Fill(new Rect(x + U(92f) + p * (pip + U(4f)), y + row * 0.5f - U(12f), pip, U(6f)),
+                    p < level ? new Color(0.45f, 1f, 0.5f) : new Color(1f, 1f, 1f, 0.14f));
+
+            var buttonRect = new Rect(x + width - buttonWidth, y + (row - U(40f)) * 0.5f, buttonWidth, U(40f));
+            if (cost <= 0)
+            {
+                _ui.Button(buttonRect, "MAX", UiKit.Look.Ghost, false, 13);
+            }
+            else if (_ui.Button(buttonRect, cost.ToString("N0"), PlayerProfile.Coins >= cost ? UiKit.Look.Accent : UiKit.Look.Ghost, false, 14, UiIcon.Coin))
+            {
+                if (PlayerProfile.TryUpgrade(car, upgrade)) GarageNote(UpgradeNames[i] + " level " + (level + 1) + " fitted", false);
+                else GarageNote("Not enough coins.", true);
+            }
+
+            y += row + U(6f);
+        }
+    }
+
+    private void GarageStyle(int car, CarLook look, CarBody body, float x, float y, float width, float room)
+    {
+        // Paint: two rows of swatches.
+        var colors = GameSettings.CarColors.Length;
+        var perRow = (colors + 1) / 2;
+        var gap = U(6f);
+        var rows = body == CarBody.Buggy ? 0 : 4;
+        var swatch = Mathf.Min(U(32f), (width - gap * (perRow - 1)) / perRow, (room - rows * U(32f)) / 2f - gap);
+        for (var i = 0; i < colors; i++)
+        {
+            var rect = new Rect(x + (i % perRow) * (swatch + gap), y + (i / perRow) * (swatch + gap), swatch, swatch);
+            if (_ui.Swatch(rect, GameSettings.CarColors[i], look.Paint == i)) PlayerProfile.SetPaint(car, i);
+        }
+
+        y += (swatch + gap) * 2f + U(4f);
+        if (body == CarBody.Buggy)
+        {
+            _ui.Text(new Rect(x, y, width, U(36f)), "The RC buggy comes in any paint.\nRoad cars also take finishes, rims, wings and stripes.", 12, TextAnchor.UpperLeft, UiKit.TextDim);
+            return;
+        }
+
+        var row = Mathf.Clamp((room - (swatch + gap) * 2f - U(4f)) / 4f - U(4f), U(26f), U(36f));
+        StyleRow(car, PlayerProfile.Option.Finish, "FINISH", CarLook.FinishNames, look.Finish, x, ref y, width, row);
+        StyleRow(car, PlayerProfile.Option.Rim, "RIMS", CarLook.RimNames, look.Rim, x, ref y, width, row);
+        StyleRow(car, PlayerProfile.Option.Spoiler, "WING", CarLook.SpoilerNames, look.Spoiler, x, ref y, width, row);
+        StyleRow(car, PlayerProfile.Option.Stripes, "STRIPES", new[] { "OFF", "ON" }, look.Stripes ? 1 : 0, x, ref y, width, row);
+    }
+
+    /// <summary>One look option as a segmented control; locked choices show their price and buy on tap.</summary>
+    private void StyleRow(int car, PlayerProfile.Option option, string label, string[] names, int current, float x, ref float y, float width, float row)
+    {
+        var labels = new string[names.Length];
+        for (var i = 0; i < names.Length; i++)
+            labels[i] = PlayerProfile.Unlocked(car, option, i) ? names[i] : names[i] + " " + PlayerProfile.OptionCost(option, i);
+        _ui.Text(new Rect(x, y, U(72f), row), label, 12, TextAnchor.MiddleLeft, UiKit.TextDim, true);
+        var choice = _ui.Segmented(new Rect(x + U(74f), y, width - U(74f), row), labels, current, 10);
+        if (choice != current)
+        {
+            var wasLocked = !PlayerProfile.Unlocked(car, option, choice);
+            if (PlayerProfile.TrySetOption(car, option, choice))
+            {
+                if (wasLocked) GarageNote(names[choice] + " unlocked", false);
+            }
+            else GarageNote("Not enough coins.", true);
+        }
+
+        y += row + U(4f);
     }
 
     // ------------------------------------------------------------------ tracks and arenas
@@ -321,15 +481,16 @@ public sealed partial class ARDemoController
             "Needs about " + (extent * 2f).ToString("0.0") + " x " + (extent * 2f).ToString("0.0") + " m of floor", 12, TextAnchor.MiddleCenter, UiKit.TextDim);
     }
 
-    private void StatBar(float x, ref float y, float width, float row, string label, int rating)
+    private void StatBar(float x, ref float y, float width, float row, string label, int rating, int baseRating = -1)
     {
+        if (baseRating < 0) baseRating = rating;
         _ui.Text(new Rect(x, y, U(100f), row), label, 13, TextAnchor.MiddleLeft, Color.white);
         var barX = x + U(104f);
         var barWidth = width - U(104f);
         var segment = barWidth / 10f;
         for (var i = 0; i < 10; i++)
             _ui.Fill(new Rect(barX + i * segment, y + row * 0.3f, segment - U(3f), row * 0.4f),
-                i < rating ? UiKit.AccentColor : new Color(1f, 1f, 1f, 0.12f));
+                i < Mathf.Min(rating, baseRating) ? UiKit.AccentColor : i < rating ? new Color(0.45f, 1f, 0.5f) : new Color(1f, 1f, 1f, 0.12f));
         y += row + U(4f);
     }
 
@@ -740,7 +901,7 @@ public sealed partial class ARDemoController
         {
             var speed = player != null ? Mathf.RoundToInt(Mathf.Abs(player.Speed) * 3.6f * RcScale) : 0;
             title = "FREE DRIVE";
-            sub = "Coins " + (player != null ? player.Coins : 0) + "   •   " + speed + " km/h";
+            sub = "Coins " + (player != null ? player.Coins : 0) + "   •   " + speed + " km/h   •   bank " + PlayerProfile.Coins.ToString("N0");
         }
         else if (_mode == GameMode.Battle)
         {
@@ -945,7 +1106,7 @@ public sealed partial class ARDemoController
     {
         var order = _mode == GameMode.Battle ? BattleOrder() : RaceOrder();
         var rowHeight = U(30f);
-        var height = U(70f) + rowHeight * order.Count + U(64f);
+        var height = U(70f) + rowHeight * order.Count + U(114f);
         var panel = CenterPanel(area, U(420f), Mathf.Min(height, area.height));
         _ui.Panel(panel);
         var inner = Inset(panel, U(14f));
@@ -966,7 +1127,18 @@ public sealed partial class ARDemoController
         }
 
         if (_newBest && _mode == GameMode.Race)
+        {
             _ui.Text(new Rect(inner.x, y, inner.width, U(20f)), "NEW BEST TIME!", 13, TextAnchor.MiddleCenter, UiKit.AccentColor, true);
+            y += U(20f);
+        }
+
+        if (_roundEarned > 0)
+        {
+            var earned = new Rect(inner.center.x - U(110f), y + U(2f), U(220f), U(24f));
+            _ui.Icon(new Rect(earned.x, earned.y, U(22f), U(22f)), UiIcon.Coin, UiKit.AccentColor);
+            _ui.Text(new Rect(earned.x + U(28f), earned.y, earned.width - U(28f), earned.height),
+                "+" + _roundEarned + " coins  (total " + PlayerProfile.Coins.ToString("N0") + ")", 13, TextAnchor.MiddleLeft, Color.white, true);
+        }
 
         var buttonY = inner.yMax - U(46f);
         var half = (inner.width - U(10f)) * 0.5f;

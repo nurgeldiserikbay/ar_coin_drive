@@ -66,6 +66,13 @@ public sealed partial class ARDemoController : MonoBehaviour
     private float _bestTime;
     private bool _newBest;
 
+    // Garage coins earned this round.
+    private int _roundEarned;
+    private int _placePrize;
+    private int _coinsRewarded;
+    private bool _prizeGiven;
+    private float _earnFlashAt = -10f;
+
     // Free-drive building
     private readonly List<WorldObstacle> _placed = new List<WorldObstacle>();
     private readonly List<GameObject> _placedObjects = new List<GameObject>();
@@ -211,6 +218,7 @@ public sealed partial class ARDemoController : MonoBehaviour
             if (IsClient) UpdateClient(dt);
             else SimulateGame(dt);
             UpdateCarVisuals(dt);
+            UpdateRewards();
         }
     }
 

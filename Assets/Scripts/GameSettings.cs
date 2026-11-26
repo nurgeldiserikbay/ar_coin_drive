@@ -10,10 +10,11 @@ public static class GameSettings
     {
         new Color(0.80f, 0.06f, 0.05f), new Color(0.06f, 0.24f, 0.72f), new Color(0.98f, 0.70f, 0.06f),
         new Color(0.08f, 0.55f, 0.22f), new Color(0.95f, 0.42f, 0.06f), new Color(0.45f, 0.14f, 0.62f),
-        new Color(0.92f, 0.92f, 0.90f), new Color(0.10f, 0.10f, 0.11f)
+        new Color(0.92f, 0.92f, 0.90f), new Color(0.10f, 0.10f, 0.11f), new Color(0.05f, 0.60f, 0.72f),
+        new Color(0.90f, 0.22f, 0.52f), new Color(0.62f, 0.64f, 0.67f), new Color(0.55f, 0.82f, 0.10f)
     };
 
-    public static readonly string[] CarColorNames = { "Red", "Blue", "Yellow", "Green", "Orange", "Purple", "White", "Black" };
+    public static readonly string[] CarColorNames = { "Red", "Blue", "Yellow", "Green", "Orange", "Purple", "White", "Black", "Teal", "Pink", "Silver", "Lime" };
 
     /// <summary>Shell trim colour that reads well against each paint.</summary>
     public static Color TrimFor(int colorIndex) =>
@@ -32,7 +33,8 @@ public static class GameSettings
     public static OrientationSetting Orientation { get => (OrientationSetting)GetInt("Orientation", 0); set => SetInt("Orientation", (int)value); }
     public static SteeringSetting Steering { get => (SteeringSetting)GetInt("Steering", 0); set => SetInt("Steering", (int)value); }
     public static int Bots { get => Mathf.Clamp(GetInt("Bots", 1), 0, 3); set => SetInt("Bots", Mathf.Clamp(value, 0, 3)); }
-    public static int CarColor { get => Mathf.Clamp(GetInt("CarColor", 0), 0, CarColors.Length - 1); set => SetInt("CarColor", value); }
+    /// <summary>The selected car's paint (each car in the garage keeps its own).</summary>
+    public static int CarColor { get => Mathf.Clamp(PlayerProfile.Look(CarType).Paint, 0, CarColors.Length - 1); set => PlayerProfile.SetPaint(CarType, value); }
     public static TrackLayout Track { get => (TrackLayout)Mathf.Clamp(GetInt("Track", 0), 0, RaceTrack.LayoutNames.Length - 1); set => SetInt("Track", (int)value); }
     public static TrackSize TrackSize { get => (TrackSize)Mathf.Clamp(GetInt("TrackSize", 1), 0, 2); set => SetInt("TrackSize", (int)value); }
     public static ArenaShape Arena { get => (ArenaShape)Mathf.Clamp(GetInt("Arena", 0), 0, 1); set => SetInt("Arena", (int)value); }
