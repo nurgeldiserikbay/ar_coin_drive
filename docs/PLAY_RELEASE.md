@@ -5,9 +5,9 @@ Upload key: `../keys/upload.keystore` + `../keys/release.properties` (outside th
 
 ## Before the release build
 
-1. **AdMob**: create the app in AdMob (Android, "not yet on Google Play" is fine), plus two ad units: *Interstitial* and *Rewarded*. Put the three IDs in `Assets/Scripts/GameAds.cs` (`AndroidAppId`, `InterstitialUnitId`, `RewardedUnitId`). While they are Google's test IDs the build log warns "AdMob uses Google's TEST IDs".
+1. **AdMob**: done — app `ca-app-pub-9702825788968948~7895231377`, Interstitial `…/1220856863`, Rewarded `…/8784807060` in `GameAds.cs`.
 2. **AdMob > Privacy & messaging**: create a **GDPR (European regulations)** message for the app and publish it. Without it the consent form never appears and EEA/UK players get no ads.
-3. **Privacy policy**: publish `docs/PRIVACY_POLICY.md` (fill in publisher name, email, date), then put the URL in `GameAds.PrivacyPolicyUrl` (shows Settings > Privacy > POLICY) and in Play Console.
+3. **Privacy policy**: published at https://docs.google.com/document/d/e/2PACX-1vQC9oA5-f4n4TVwz0G8_WTuk_a2wLmmRno5B0NewYHIg4PUXv_c3BSojrKTB8_GQOxlbXIIXtYoDhcB/pub (also in `GameAds.PrivacyPolicyUrl`).
 4. Increase `VersionCode` in `Assets/Editor/ARCoinDriveRelease.cs` for every upload (the Android build profile overrides Player Settings, so the script sets it).
 5. After publishing, add `app-ads.txt` to the developer website listed in Play Console (AdMob shows the line).
 

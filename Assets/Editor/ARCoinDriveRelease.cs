@@ -22,7 +22,7 @@ public static class ARCoinDriveRelease
     // Raise VersionCode for EVERY upload to Google Play (Play rejects a code it has seen).
     // Set here, not in Player Settings, because the Android build profile keeps its own copy.
     public const string VersionName = "1.0";
-    public const int VersionCode = 2;
+    public const int VersionCode = 3;
 
     [MenuItem("AR Coin Drive/Build Google Play Bundle")]
     public static void BuildBundle()
