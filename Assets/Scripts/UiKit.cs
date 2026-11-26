@@ -91,8 +91,16 @@ public sealed class UiKit
         EnsureTextures();
     }
 
+#if UI_CAPTURE
+    /// <summary>UI review build: the scale a real phone of the emulated size would use.</summary>
+    public static float ForcedScale;
+#endif
+
     private void UpdateScale()
     {
+#if UI_CAPTURE
+        if (ForcedScale > 0f) { Scale = ForcedScale; return; }
+#endif
         // Size buttons by physical size; landscape phones are short, so cap by height too.
         var dpiScale = Screen.dpi > 0f ? Screen.dpi / 160f : Screen.width / 420f;
         var shortSide = Mathf.Min(Screen.width, Screen.height);
@@ -319,7 +327,56 @@ public sealed class UiKit
     public void Text(Rect rect, string text, int fontSize, TextAnchor anchor, Color color, bool bold = false, bool shadow = false)
     {
         if (!Drawing || string.IsNullOrEmpty(text)) return;
-        var style = LabelStyle(Mathf.RoundToInt(fontSize * Scale), anchor, bold);
+        DrawLabel(rect, text, Mathf.RoundToInt(fontSize * Scale), anchor, color, bold, shadow);
+    }
+
+    /// <summary>
+    /// One line of text that shrinks (down to 60% of <paramref name="fontSize"/>) instead of wrapping
+    /// or spilling out of <paramref name="rect"/>: titles, chips and anything in a fixed-width slot.
+    /// </summary>
+    public void TextFit(Rect rect, string text, int fontSize, TextAnchor anchor, Color color, bool bold = false, bool shadow = false)
+    {
+        if (!Drawing || string.IsNullOrEmpty(text)) return;
+        DrawLabel(rect, text, FitSize(text, fontSize, rect.width, bold), anchor, color, bold, shadow);
+    }
+
+    private readonly Dictionary<(string, int, int, bool), float> _heights = new Dictionary<(string, int, int, bool), float>();
+
+    /// <summary>
+    /// Height wrapped text needs in <paramref name="width"/>, so layouts can stack paragraphs without
+    /// overlap. Measured in the draw pass (GUI styles only work in OnGUI) and reused by the input pass,
+    /// so both passes place controls identically; before the first draw it is estimated.
+    /// </summary>
+    public float TextHeight(string text, int fontSize, float width, bool bold = false)
+    {
+        if (string.IsNullOrEmpty(text)) return 0f;
+        var size = Mathf.RoundToInt(fontSize * Scale);
+        var key = (text, size, Mathf.RoundToInt(width), bold);
+        if (_heights.TryGetValue(key, out var height)) return height;
+        if (!Drawing)
+        {
+            var lines = Mathf.Max(1, Mathf.CeilToInt(text.Length * size * 0.55f / Mathf.Max(1f, width)));
+            return lines * size * 1.3f;
+        }
+
+        height = LabelStyle(size, TextAnchor.UpperLeft, bold).CalcHeight(new GUIContent(text), width);
+        _heights[key] = height;
+        return height;
+    }
+
+    /// <summary>Pixel font size at which <paramref name="text"/> fits on one line in <paramref name="width"/>.</summary>
+    private int FitSize(string text, int fontSize, float width, bool bold)
+    {
+        var size = Mathf.RoundToInt(fontSize * Scale);
+        var smallest = Mathf.Max(8, Mathf.RoundToInt(size * 0.6f));
+        var content = new GUIContent(text);
+        while (size > smallest && LabelStyle(size, TextAnchor.MiddleLeft, bold).CalcSize(content).x > width) size--;
+        return size;
+    }
+
+    private void DrawLabel(Rect rect, string text, int pixelSize, TextAnchor anchor, Color color, bool bold, bool shadow)
+    {
+        var style = LabelStyle(pixelSize, anchor, bold);
         var previous = GUI.contentColor;
         var previousColor = GUI.color;
         GUI.color = new Color(1f, 1f, 1f, _alpha);
@@ -413,7 +470,8 @@ public sealed class UiKit
     {
         if (icon == UiIcon.None)
         {
-            Text(rect, label, fontSize, TextAnchor.MiddleCenter, Color.white, true);
+            if (!string.IsNullOrEmpty(label))
+                DrawLabel(rect, label, FitSize(label, fontSize, rect.width - U(10f), true), TextAnchor.MiddleCenter, Color.white, true, false);
             return;
         }
 
@@ -424,12 +482,13 @@ public sealed class UiKit
             return;
         }
 
-        var style = LabelStyle(Mathf.RoundToInt(fontSize * Scale), TextAnchor.MiddleLeft, true);
-        var textWidth = style.CalcSize(new GUIContent(label)).x;
+        // Shrink the label to fit beside the icon rather than spill past the button edges.
+        var size = FitSize(label, fontSize, rect.width - iconSize - U(8f) - U(14f), true);
+        var textWidth = LabelStyle(size, TextAnchor.MiddleLeft, true).CalcSize(new GUIContent(label)).x;
         var total = iconSize + U(8f) + textWidth;
         var x = rect.center.x - total * 0.5f;
         Icon(new Rect(x, rect.center.y - iconSize * 0.5f, iconSize, iconSize), icon, Color.white);
-        Text(new Rect(x + iconSize + U(8f), rect.y, textWidth + U(4f), rect.height), label, fontSize, TextAnchor.MiddleLeft, Color.white, true);
+        DrawLabel(new Rect(x + iconSize + U(8f), rect.y, textWidth + U(4f), rect.height), label, size, TextAnchor.MiddleLeft, Color.white, true, false);
     }
 
     private void DrawRounded(Rect rect, Color color, float radius = -1f)

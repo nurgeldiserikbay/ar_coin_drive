@@ -86,12 +86,14 @@ public sealed partial class ARDemoController
             return;
         }
 
-        var vipRect = new Rect(area.xMax - U(130f), area.y + U(44f), U(130f), U(36f));
+        // Top bar: coins and VIP side by side in the top-right corner; everything else starts below it.
+        var topBar = U(44f);
+        var vipRect = new Rect(area.xMax - U(100f), area.y, U(100f), U(36f));
         if (PlayerProfile.Vip)
         {
             _ui.Panel(vipRect);
             _ui.Icon(new Rect(vipRect.x + U(8f), vipRect.center.y - U(11f), U(22f), U(22f)), UiIcon.Trophy, UiKit.AccentColor);
-            _ui.Text(new Rect(vipRect.x + U(34f), vipRect.y, vipRect.width - U(40f), vipRect.height), "VIP x2", 14, TextAnchor.MiddleLeft, UiKit.AccentColor, true);
+            _ui.TextFit(new Rect(vipRect.x + U(34f), vipRect.y, vipRect.width - U(40f), vipRect.height), "VIP x2", 14, TextAnchor.MiddleLeft, UiKit.AccentColor, true);
         }
         else if (_ui.Button(vipRect, "VIP", UiKit.Look.Accent, false, 14, UiIcon.Trophy))
         {
@@ -105,14 +107,16 @@ public sealed partial class ARDemoController
         var buttonWidth = Mathf.Min(U(320f), area.width);
         if (Landscape)
         {
-            var left = area.width * 0.56f;
+            var left = area.width * 0.54f;
+            // Never wider than the space right of the hero image.
+            buttonWidth = Mathf.Min(buttonWidth, area.width - left - U(16f));
             hero = new Rect(area.x, area.y + area.height * 0.22f, left, area.height * 0.78f);
             logoRect = new Rect(area.x, area.y, left, area.height * 0.34f);
-            column = new Rect(area.x + left + (area.width - left - buttonWidth) * 0.5f, area.y, buttonWidth, area.height);
+            column = new Rect(area.x + left + (area.width - left - buttonWidth) * 0.5f, area.y + topBar, buttonWidth, area.height - topBar);
         }
         else
         {
-            logoRect = new Rect(area.x, area.y, area.width, area.height * 0.24f);
+            logoRect = new Rect(area.x, area.y + topBar, area.width, area.height * 0.24f - topBar * 0.5f);
             hero = new Rect(area.x, logoRect.yMax - U(10f), area.width, area.height * 0.30f);
             column = new Rect(area.center.x - buttonWidth * 0.5f, hero.yMax, buttonWidth, area.yMax - hero.yMax);
         }
@@ -153,13 +157,13 @@ public sealed partial class ARDemoController
         y += rowHeight + U(10f);
         _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor]
             + " " + CarCatalog.Get(GameSettings.CarType).Name, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
-        CoinChip(new Rect(area.xMax - U(130f), area.y, U(130f), U(36f)));
+        CoinChip(new Rect(vipRect.x - U(138f), area.y, U(130f), U(36f)));
     }
 
     /// <summary>The VIP pass offer, plus restoring purchases on a new phone.</summary>
     private void VipPanel(Rect area)
     {
-        var panel = CenterPanel(area, U(420f), Mathf.Min(area.height, U(400f)));
+        var panel = CenterPanel(area, U(420f), Mathf.Min(area.height, U(370f)));
         _ui.Panel(panel);
         var inner = Inset(panel, U(18f));
         var y = inner.y;
@@ -242,7 +246,7 @@ public sealed partial class ARDemoController
     {
         _ui.Panel(rect);
         _ui.Icon(new Rect(rect.x + U(8f), rect.center.y - U(11f), U(22f), U(22f)), UiIcon.Coin, UiKit.AccentColor);
-        _ui.Text(new Rect(rect.x + U(34f), rect.y, rect.width - U(40f), rect.height), PlayerProfile.Coins.ToString("N0"), 15, TextAnchor.MiddleLeft, Color.white, true);
+        _ui.TextFit(new Rect(rect.x + U(34f), rect.y, rect.width - U(40f), rect.height), PlayerProfile.Coins.ToString("N0"), 15, TextAnchor.MiddleLeft, Color.white, true);
     }
 
     private void GarageScreen()
@@ -264,9 +268,10 @@ public sealed partial class ARDemoController
             info = new Rect(area.x, area.yMax - infoHeight, area.width, infoHeight);
         }
 
-        _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "GARAGE", 22, TextAnchor.MiddleLeft, Color.white, true);
+        var garageCoins = new Rect(area.xMax - U(110f) - U(8f) - U(112f), area.y, U(112f), U(36f));
+        _ui.TextFit(new Rect(area.x, area.y, garageCoins.x - area.x - U(8f), U(32f)), "GARAGE", 22, TextAnchor.MiddleLeft, Color.white, true);
         if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "DONE", UiKit.Look.Primary)) CloseGarage();
-        CoinChip(new Rect(area.xMax - U(240f), area.y, U(120f), U(36f)));
+        CoinChip(garageCoins);
 
         var count = CarCatalog.All.Length;
         var index = Mathf.Clamp(_garageView, 0, count - 1);
@@ -475,7 +480,7 @@ public sealed partial class ARDemoController
     {
         _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 0.96f));
         var area = SafeRect();
-        _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "TRACKS & ARENAS", 22, TextAnchor.MiddleLeft, Color.white, true);
+        _ui.TextFit(new Rect(area.x, area.y, area.width - U(120f), U(32f)), "TRACKS & ARENAS", 22, TextAnchor.MiddleLeft, Color.white, true);
         if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "DONE", UiKit.Look.Primary))
         {
             GameSettings.Save();
@@ -493,7 +498,9 @@ public sealed partial class ARDemoController
         Rect map;
         if (Landscape)
         {
-            list = new Rect(area.x, area.y + U(44f), area.width * 0.38f, area.height - U(44f));
+            // Wide enough for the size and arena buttons on small phones, never more than half the screen.
+            var listWidth = Mathf.Max(area.width * 0.38f, Mathf.Min(U(320f), area.width * 0.5f));
+            list = new Rect(area.x, area.y + U(44f), listWidth, area.height - U(44f));
             map = new Rect(list.xMax + U(16f), list.y, area.width - list.width - U(16f), list.height);
         }
         else
@@ -575,9 +582,10 @@ public sealed partial class ARDemoController
         var y = inner.y;
         _ui.Text(new Rect(inner.x, y, inner.width, U(28f)), "MULTIPLAYER", 20, TextAnchor.MiddleLeft, Color.white, true);
         y += U(28f);
-        _ui.Text(new Rect(inner.x, y, inner.width, U(36f)), "Up to 4 players on the same Wi-Fi, or connect to one phone's hotspot. Each phone plays on its own floor or in its own virtual room; mixing both works.",
-            12, TextAnchor.UpperLeft, UiKit.TextDim);
-        y += U(42f);
+        const string lobbyIntro = "Up to 4 players on the same Wi-Fi, or connect to one phone's hotspot. Each phone plays on its own floor or in its own virtual room; mixing both works.";
+        var introHeight = _ui.TextHeight(lobbyIntro, 12, inner.width);
+        _ui.Text(new Rect(inner.x, y, inner.width, introHeight), lobbyIntro, 12, TextAnchor.UpperLeft, UiKit.TextDim);
+        y += introHeight + U(12f);
 
         var row = U(42f);
         if (_arena == null)
@@ -672,7 +680,7 @@ public sealed partial class ARDemoController
     {
         _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
         var area = SafeRect();
-        _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "CHOOSE A LOCATION", 22, TextAnchor.MiddleLeft, Color.white, true);
+        _ui.TextFit(new Rect(area.x, area.y, area.width - U(120f), U(32f)), "CHOOSE A LOCATION", 22, TextAnchor.MiddleLeft, Color.white, true);
         if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "BACK", UiKit.Look.Ghost, false, 14, UiIcon.Back))
             _screen = UiScreen.Menu;
 
@@ -1042,7 +1050,8 @@ public sealed partial class ARDemoController
 
     private void StatusChip(Rect area, Rect pauseRect)
     {
-        var width = Mathf.Min(U(300f), pauseRect.x - area.x - U(110f));
+        // The standings sit below the pause button, so the chip may reach almost to it.
+        var width = Mathf.Min(U(330f), pauseRect.x - area.x - U(10f));
         var chip = new Rect(area.x, area.y, width, U(52f));
         _ui.Panel(chip);
         var modeIcon = _mode == GameMode.Free ? UiIcon.Coin : _mode == GameMode.Battle ? UiIcon.Trophy : UiIcon.Flag;
@@ -1055,11 +1064,11 @@ public sealed partial class ARDemoController
         {
             var speed = player != null ? Mathf.RoundToInt(Mathf.Abs(player.Speed) * 3.6f * RcScale) : 0;
             title = "FREE DRIVE";
-            sub = "Coins " + (player != null ? player.Coins : 0) + "   •   " + speed + " km/h   •   bank " + PlayerProfile.Coins.ToString("N0");
+            sub = "Coins " + (player != null ? player.Coins : 0) + "  •  " + speed + " km/h  •  bank " + PlayerProfile.Coins.ToString("N0");
         }
         else if (_mode == GameMode.Battle)
         {
-            title = "BATTLE  •  RING " + Mathf.RoundToInt(_battleRadius * 200f) + " cm";
+            title = "BATTLE  •  RING " + Mathf.RoundToInt(_battleRadius * 200f) + " CM";
             sub = "First to " + BattleWinsNeeded + " points  •  you " + (player != null ? player.Wins : 0);
         }
         else
@@ -1069,8 +1078,8 @@ public sealed partial class ARDemoController
             sub = FormatTime(_raceTime) + "   •   best " + (_bestTime > 0f ? FormatTime(_bestTime) : "--");
         }
 
-        _ui.Text(new Rect(inner.x, inner.y, inner.width, inner.height * 0.55f), title, 15, TextAnchor.MiddleLeft, Color.white, true);
-        _ui.Text(new Rect(inner.x, inner.y + inner.height * 0.55f, inner.width, inner.height * 0.45f), sub, 12, TextAnchor.MiddleLeft, UiKit.TextDim);
+        _ui.TextFit(new Rect(inner.x, inner.y, inner.width, inner.height * 0.55f), title, 15, TextAnchor.MiddleLeft, Color.white, true);
+        _ui.TextFit(new Rect(inner.x, inner.y + inner.height * 0.55f, inner.width, inner.height * 0.45f), sub, 12, TextAnchor.MiddleLeft, UiKit.TextDim);
 
         // Race progress along the bottom edge of the chip.
         if (_mode == GameMode.Race && player != null)
@@ -1085,13 +1094,20 @@ public sealed partial class ARDemoController
         var age = Time.unscaledTime - _messageTime;
         var alpha = Mathf.Clamp01(1f - (age - 6f) / 1.5f);
         if (alpha > 0f && !string.IsNullOrEmpty(_message))
-            _ui.Text(new Rect(area.x + U(2f), chip.yMax + U(6f), Mathf.Min(U(420f), area.width * 0.6f), U(40f)), _message, 13,
+        {
+            // Stop short of the standings box (top right, 150 wide) when it is shown.
+            var messageWidth = Mathf.Min(U(420f), area.width * 0.6f);
+            if (StandingsShown) messageWidth = Mathf.Min(messageWidth, area.width - U(150f) - U(12f));
+            _ui.Text(new Rect(area.x + U(2f), chip.yMax + U(6f), messageWidth, U(60f)), _message, 13,
                 TextAnchor.UpperLeft, new Color(1f, 1f, 1f, alpha), false, true);
+        }
     }
+
+    private bool StandingsShown => _mode != GameMode.Free && _cars.Count >= 2 && _state != GameState.Finished;
 
     private void Standings(Rect area, Rect pauseRect)
     {
-        if (_mode == GameMode.Free || _cars.Count < 2 || _state == GameState.Finished) return;
+        if (!StandingsShown) return;
         var order = _mode == GameMode.Battle ? BattleOrder() : RaceOrder();
         var rowHeight = U(22f);
         var width = U(150f);
@@ -1158,7 +1174,8 @@ public sealed partial class ARDemoController
     {
         var width = U(104f);
         var height = U(38f);
-        var y = area.y + U(52f) + U(50f);
+        // Below the status chip and its hint: the hint is narrower in portrait, so it may take three lines.
+        var y = area.y + U(52f) + (Landscape ? U(50f) : U(72f));
         var x = area.x;
         if (_virtualMode && !_buildMode)
         {
@@ -1262,6 +1279,9 @@ public sealed partial class ARDemoController
         var rowHeight = U(30f);
         // Offered once per round, never in LAN games (a full-screen ad pauses the session) or to VIP players.
         var offerAd = !IsOnline && _adBonus == 0 && _roundEarned > 0 && GameAds.RewardedReady;
+#if UI_CAPTURE
+        offerAd |= CaptureForceAdOffer;
+#endif
         var height = U(70f) + rowHeight * order.Count + U(114f) + (offerAd || _adBonus > 0 ? U(54f) : 0f);
         var panel = CenterPanel(area, U(420f), Mathf.Min(height, area.height));
         _ui.Panel(panel);

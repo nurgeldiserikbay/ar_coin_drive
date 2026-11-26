@@ -124,6 +124,37 @@ public static class ARCoinDriveRelease
         if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
     }
 
+    /// <summary>
+    /// UI review: a Windows build with UI_CAPTURE that screenshots every screen at phone and tablet
+    /// sizes into build/uicapture/shots, then quits. Run build/uicapture/ARCoinDrive.exe after it.
+    /// </summary>
+    [MenuItem("AR Coin Drive/Build UI Capture (Windows)")]
+    public static void BuildUiCapture()
+    {
+        var ok = false;
+        try
+        {
+            ARCoinDriveSceneBuilder.CreateDemoScene();
+            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = new[] { "Assets/Scenes/ARCoinDriveDemo.unity" },
+                locationPathName = "build/uicapture/ARCoinDrive.exe",
+                target = BuildTarget.StandaloneWindows64,
+                targetGroup = BuildTargetGroup.Standalone,
+                extraScriptingDefines = new[] { "UI_CAPTURE" },
+                options = BuildOptions.None
+            });
+            Debug.Log("CAPTURE_BUILD " + report.summary.result + " errors=" + report.summary.totalErrors);
+            ok = report.summary.result == BuildResult.Succeeded;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("CAPTURE_BUILD_FAILED " + e.Message);
+        }
+
+        if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
+    }
+
     private static Dictionary<string, string> ReadProperties()
     {
         var path = Environment.GetEnvironmentVariable("ACD_RELEASE_PROPERTIES");

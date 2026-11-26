@@ -90,6 +90,10 @@ public sealed class GaragePreview
         _angle += dragDegrees + (Mathf.Abs(dragDegrees) > 0.01f ? 0f : 18f * dt);
         _car.transform.localRotation = Quaternion.Euler(0f, _angle, 0f);
         _camera.aspect = width / (float)height;
+        // Keep at least ~40 degrees across, so the whole car and turntable fit in narrow (portrait)
+        // frames instead of the wing and wheels being cut off at the sides.
+        var minVertical = 2f * Mathf.Atan(Mathf.Tan(20f * Mathf.Deg2Rad) / _camera.aspect) * Mathf.Rad2Deg;
+        _camera.fieldOfView = Mathf.Clamp(minVertical, 26f, 60f);
 
         // Studio lighting for the shot: the scene's key light comes from above the camera's
         // shoulder while the preview renders, then goes back to lighting the game.

@@ -134,6 +134,9 @@ public sealed partial class ARDemoController : MonoBehaviour
         GameStore.Init();
         GameAds.Init();
         StartCoroutine(CheckARSupport());
+#if UI_CAPTURE
+        StartCoroutine(CaptureAllScreens());
+#endif
     }
 
     /// <summary>Learns whether AR can run; the menu disables AR play if it cannot.</summary>
