@@ -787,7 +787,8 @@ public sealed partial class ARDemoController
         else
         {
             tile = new Rect(card.x + pad, card.y + pad, card.width - pad * 2f, Mathf.Min(card.height * 0.48f, U(170f)));
-            text = new Rect(card.x + U(16f), tile.yMax + U(10f), card.width - U(32f), card.yMax - tile.yMax - U(20f) - U(44f));
+            // Leave room on the right for the play arrow in the bottom corner.
+            text = new Rect(card.x + U(16f), tile.yMax + U(10f), card.width - U(32f) - U(40f), card.yMax - tile.yMax - U(20f));
         }
 
         // Tile: colour, a lighter top half for depth, the icon in the middle.
