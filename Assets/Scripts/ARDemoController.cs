@@ -308,6 +308,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     /// <summary>Starts scanning the real floor (AR) for single player or a network game.</summary>
     private void BeginAR()
     {
+        _garage?.Release();
         _screen = UiScreen.Game;
         _scanStartTime = Time.unscaledTime;
         _state = GameState.Placing;
@@ -316,6 +317,7 @@ public sealed partial class ARDemoController : MonoBehaviour
 
     private void EnterVirtualMode()
     {
+        _garage?.Release();
         _screen = UiScreen.Game;
         if (_virtualMode) return;
         if (_arena != null) ResetToScanning();

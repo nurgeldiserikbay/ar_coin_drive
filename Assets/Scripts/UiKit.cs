@@ -32,6 +32,10 @@ public sealed class UiKit
     private int _roundedRadius = -1;
     private GUIStyle _box;
     private readonly Dictionary<int, GUIStyle> _labels = new Dictionary<int, GUIStyle>();
+    private Font _font;
+    private Font _fontBold;
+    private bool _fontsLoaded;
+    private float _alpha = 1f;
 
     public bool Drawing { get; private set; }
     public float Scale { get; private set; } = 1f;
@@ -81,6 +85,8 @@ public sealed class UiKit
     public void BeginDraw()
     {
         Drawing = true;
+        _alpha = 1f;
+        GUI.matrix = Matrix4x4.identity;
         UpdateScale();
         EnsureTextures();
     }
@@ -173,7 +179,42 @@ public sealed class UiKit
 
     // ------------------------------------------------------------------ widgets
 
-    public bool Button(Rect rect, string label, Look look = Look.Normal, bool selected = false, int fontSize = 15)
+    // ------------------------------------------------------------------ screen transitions
+
+    /// <summary>Fades and slides a screen in during its first quarter second.</summary>
+    public void BeginScreen(float age)
+    {
+        if (!Drawing) return;
+        var t = Mathf.Clamp01(age / 0.25f);
+        var eased = 1f - (1f - t) * (1f - t) * (1f - t);
+        _alpha = eased;
+        GUI.matrix = Matrix4x4.Translate(new Vector3(0f, (1f - eased) * U(18f), 0f));
+    }
+
+    public void EndScreen()
+    {
+        if (!Drawing) return;
+        _alpha = 1f;
+        GUI.matrix = Matrix4x4.identity;
+    }
+
+    /// <summary>Big text that pops in (countdown, GO, knockouts): scale overshoots, then settles.</summary>
+    public void PopText(Rect rect, string text, int fontSize, Color color, float age)
+    {
+        if (!Drawing || string.IsNullOrEmpty(text)) return;
+        var scale = 1f + 0.7f * Mathf.Exp(-age * 9f) * Mathf.Cos(age * 18f);
+        var previous = GUI.matrix;
+        GUI.matrix = previous * Matrix4x4.TRS(rect.center, Quaternion.identity, new Vector3(scale, scale, 1f)) * Matrix4x4.Translate(-rect.center);
+        Text(rect, text, fontSize, TextAnchor.MiddleCenter, color, true, true);
+        GUI.matrix = previous;
+    }
+
+    private Color A(Color c) => new Color(c.r, c.g, c.b, c.a * _alpha);
+
+    public bool IconButton(Rect rect, UiIcon icon, Look look = Look.Normal, bool selected = false)
+        => Button(rect, null, look, selected, 15, icon);
+
+    public bool Button(Rect rect, string label, Look look = Look.Normal, bool selected = false, int fontSize = 15, UiIcon icon = UiIcon.None)
     {
         if (!Drawing)
         {
@@ -183,23 +224,33 @@ public sealed class UiKit
         }
 
         var pressed = IsPressed(rect);
+        if (pressed) rect = Shrink(rect, 0.04f);
+        if (look != Look.Ghost) DrawShadow(rect);
         DrawRounded(rect, Tint(look, selected, pressed));
+        if (look != Look.Ghost) DrawHighlight(rect);
         if (look == Look.Ghost || selected)
             DrawOutline(rect, selected ? AccentColor : new Color(1f, 1f, 1f, 0.25f));
-        Text(rect, label, fontSize, TextAnchor.MiddleCenter, Color.white, true);
+        DrawContent(rect, label, fontSize, icon);
         return false;
     }
 
     /// <summary>A control that is active while a finger rests on it (steering, throttle).</summary>
-    public bool Hold(Rect rect, string label, Look look, bool round = false, int fontSize = 22)
+    public bool Hold(Rect rect, string label, Look look, bool round = false, int fontSize = 22, UiIcon icon = UiIcon.None)
     {
         if (!Drawing) return HeldIn(rect, out _);
 
         var pressed = IsPressed(rect);
+        if (pressed) rect = Shrink(rect, 0.06f);
         var color = Tint(look, false, pressed);
-        if (round) DrawCircle(rect, color);
+        if (round)
+        {
+            DrawCircle(new Rect(rect.x, rect.y + U(2.5f), rect.width, rect.height), new Color(0f, 0f, 0f, 0.3f));
+            DrawCircle(rect, color);
+            // Inner disc so the control reads on any background.
+            DrawCircle(Shrink(rect, 0.88f), new Color(1f, 1f, 1f, 0.07f));
+        }
         else DrawRounded(rect, color);
-        Text(rect, label, fontSize, TextAnchor.MiddleCenter, Color.white, true);
+        DrawContent(rect, label, fontSize, icon);
         return false;
     }
 
@@ -251,7 +302,18 @@ public sealed class UiKit
     public void Panel(Rect rect, Color? color = null)
     {
         Block(rect);
-        if (Drawing) DrawRounded(rect, color ?? PanelColor);
+        if (!Drawing) return;
+        DrawShadow(rect);
+        DrawRounded(rect, color ?? PanelColor);
+    }
+
+    public void Icon(Rect rect, UiIcon icon, Color color)
+    {
+        if (!Drawing || icon == UiIcon.None) return;
+        var previous = GUI.color;
+        GUI.color = A(color);
+        GUI.DrawTexture(rect, UiIcons.Get(icon), ScaleMode.ScaleToFit, true);
+        GUI.color = previous;
     }
 
     public void Text(Rect rect, string text, int fontSize, TextAnchor anchor, Color color, bool bold = false, bool shadow = false)
@@ -259,6 +321,8 @@ public sealed class UiKit
         if (!Drawing || string.IsNullOrEmpty(text)) return;
         var style = LabelStyle(Mathf.RoundToInt(fontSize * Scale), anchor, bold);
         var previous = GUI.contentColor;
+        var previousColor = GUI.color;
+        GUI.color = new Color(1f, 1f, 1f, _alpha);
         if (shadow)
         {
             GUI.contentColor = new Color(0f, 0f, 0f, color.a * 0.6f);
@@ -268,13 +332,14 @@ public sealed class UiKit
         GUI.contentColor = color;
         GUI.Label(rect, text, style);
         GUI.contentColor = previous;
+        GUI.color = previousColor;
     }
 
     public void Image(Rect rect, Texture texture, float alpha = 1f)
     {
         if (!Drawing || texture == null) return;
         var previous = GUI.color;
-        GUI.color = new Color(1f, 1f, 1f, alpha);
+        GUI.color = new Color(1f, 1f, 1f, alpha * _alpha);
         GUI.DrawTexture(rect, texture, ScaleMode.ScaleToFit, true);
         GUI.color = previous;
     }
@@ -283,7 +348,7 @@ public sealed class UiKit
     {
         if (!Drawing) return;
         var previous = GUI.color;
-        GUI.color = color;
+        GUI.color = A(color);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = previous;
     }
@@ -326,10 +391,51 @@ public sealed class UiKit
         return color;
     }
 
+    private static Rect Shrink(Rect r, float amount) =>
+        amount < 0.5f
+            ? new Rect(r.x + r.width * amount * 0.5f, r.y + r.height * amount * 0.5f, r.width * (1f - amount), r.height * (1f - amount))
+            : new Rect(r.center.x - r.width * amount * 0.5f, r.center.y - r.height * amount * 0.5f, r.width * amount, r.height * amount);
+
+    private void DrawShadow(Rect rect)
+    {
+        DrawRounded(new Rect(rect.x, rect.y + U(3f), rect.width, rect.height), new Color(0f, 0f, 0f, 0.28f));
+    }
+
+    /// <summary>Soft light band across the top for a slightly raised look.</summary>
+    private void DrawHighlight(Rect rect)
+    {
+        var top = new Rect(rect.x + U(3f), rect.y + U(2f), rect.width - U(6f), rect.height * 0.45f);
+        if (top.height >= _roundedRadius * 2f) DrawRounded(top, new Color(1f, 1f, 1f, 0.06f));
+    }
+
+    /// <summary>Icon and/or label centred in a control.</summary>
+    private void DrawContent(Rect rect, string label, int fontSize, UiIcon icon)
+    {
+        if (icon == UiIcon.None)
+        {
+            Text(rect, label, fontSize, TextAnchor.MiddleCenter, Color.white, true);
+            return;
+        }
+
+        var iconSize = Mathf.Min(rect.height * 0.52f, U(28f));
+        if (string.IsNullOrEmpty(label))
+        {
+            Icon(new Rect(rect.center.x - iconSize * 0.5f, rect.center.y - iconSize * 0.5f, iconSize, iconSize), icon, Color.white);
+            return;
+        }
+
+        var style = LabelStyle(Mathf.RoundToInt(fontSize * Scale), TextAnchor.MiddleLeft, true);
+        var textWidth = style.CalcSize(new GUIContent(label)).x;
+        var total = iconSize + U(8f) + textWidth;
+        var x = rect.center.x - total * 0.5f;
+        Icon(new Rect(x, rect.center.y - iconSize * 0.5f, iconSize, iconSize), icon, Color.white);
+        Text(new Rect(x + iconSize + U(8f), rect.y, textWidth + U(4f), rect.height), label, fontSize, TextAnchor.MiddleLeft, Color.white, true);
+    }
+
     private void DrawRounded(Rect rect, Color color, float radius = -1f)
     {
         var previous = GUI.color;
-        GUI.color = color;
+        GUI.color = A(color);
         // Thin bars use the stretched circle (a pill); everything else the 9-sliced rounded box.
         if (radius >= 0f && rect.height < _roundedRadius * 2f)
             GUI.DrawTexture(rect, _circle, ScaleMode.StretchToFill, true);
@@ -349,7 +455,7 @@ public sealed class UiKit
     private void DrawCircle(Rect rect, Color color)
     {
         var previous = GUI.color;
-        GUI.color = color;
+        GUI.color = A(color);
         GUI.DrawTexture(rect, _circle, ScaleMode.StretchToFill, true);
         GUI.color = previous;
     }
@@ -369,6 +475,12 @@ public sealed class UiKit
         }
 
         if (_circle == null) _circle = CircleTexture(128);
+        if (!_fontsLoaded)
+        {
+            _fontsLoaded = true;
+            _font = Resources.Load<Font>("Fonts/ChakraPetch-SemiBold");
+            _fontBold = Resources.Load<Font>("Fonts/ChakraPetch-Bold");
+        }
     }
 
     private GUIStyle LabelStyle(int size, TextAnchor anchor, bool bold)
@@ -386,6 +498,7 @@ public sealed class UiKit
             padding = new RectOffset(0, 0, 0, 0),
             margin = new RectOffset(0, 0, 0, 0)
         };
+        if (_font != null) style.font = bold && _fontBold != null ? _fontBold : _font;
         _labels[key] = style;
         return style;
     }

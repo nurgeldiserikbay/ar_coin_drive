@@ -28,6 +28,25 @@ public sealed partial class ARDemoController
     private void RunUi()
     {
         PollNameKeyboard();
+        if (_screen != _lastScreen)
+        {
+            _lastScreen = _screen;
+            _screenAt = Time.unscaledTime;
+        }
+
+        // Every overlay screen fades and slides in briefly; the driving HUD appears at once.
+        var age = Time.unscaledTime - _screenAt;
+        switch (_screen)
+        {
+            case UiScreen.Game:
+                GameHud(true);
+                return;
+            case UiScreen.Pause:
+                GameHud(false);
+                break;
+        }
+
+        _ui.BeginScreen(age);
         switch (_screen)
         {
             case UiScreen.Menu: MenuScreen(); break;
@@ -35,13 +54,14 @@ public sealed partial class ARDemoController
             case UiScreen.Settings: SettingsScreen(); break;
             case UiScreen.Garage: GarageScreen(); break;
             case UiScreen.Tracks: TracksScreen(); break;
-            case UiScreen.Pause:
-                GameHud(false);
-                PauseScreen();
-                break;
-            default: GameHud(true); break;
+            case UiScreen.Pause: PauseScreen(); break;
         }
+
+        _ui.EndScreen();
     }
+
+    private UiScreen _lastScreen = (UiScreen)(-1);
+    private float _screenAt;
 
     /// <summary>Safe area (notches, rounded corners) in GUI coordinates with a margin.</summary>
     private Rect SafeRect()
@@ -56,49 +76,61 @@ public sealed partial class ARDemoController
     private void MenuScreen()
     {
         var area = SafeRect();
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.02f, 0.04f, 0.07f, _arena == null && _cameraFrameCount > 0 ? 0.55f : 0.92f));
+        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, _cameraFrameCount > 0 ? 0.7f : 1f));
 
+        // Layout: the player's car on a turntable as the hero image, logo, then the actions.
+        Rect hero;
         Rect logoRect;
         Rect column;
-        var buttonWidth = Mathf.Min(U(300f), area.width);
+        var buttonWidth = Mathf.Min(U(320f), area.width);
         if (Landscape)
         {
-            var half = area.width * 0.5f;
-            logoRect = new Rect(area.x, area.y, half, area.height);
-            column = new Rect(area.x + half + (half - buttonWidth) * 0.5f, area.y, buttonWidth, area.height);
+            var left = area.width * 0.56f;
+            hero = new Rect(area.x, area.y + area.height * 0.22f, left, area.height * 0.78f);
+            logoRect = new Rect(area.x, area.y, left, area.height * 0.34f);
+            column = new Rect(area.x + left + (area.width - left - buttonWidth) * 0.5f, area.y, buttonWidth, area.height);
         }
         else
         {
-            logoRect = new Rect(area.x, area.y, area.width, area.height * 0.42f);
-            column = new Rect(area.center.x - buttonWidth * 0.5f, area.y + area.height * 0.44f, buttonWidth, area.height * 0.56f);
+            logoRect = new Rect(area.x, area.y, area.width, area.height * 0.24f);
+            hero = new Rect(area.x, logoRect.yMax - U(10f), area.width, area.height * 0.30f);
+            column = new Rect(area.center.x - buttonWidth * 0.5f, hero.yMax, buttonWidth, area.yMax - hero.yMax);
         }
 
-        _ui.Image(Inset(logoRect, U(8f)), _logo);
+        if (!_ui.Drawing)
+        {
+            if (_garage == null) _garage = new GaragePreview();
+            _garage.Show(GameSettings.CarType, GameSettings.CarColor, hero.size, Time.unscaledDeltaTime, 0f);
+        }
 
-        var rows = 4;
-        var rowHeight = Mathf.Min(U(54f), (column.height - U(40f)) / rows - U(10f));
-        var y = column.y + (column.height - rows * (rowHeight + U(10f)) - U(30f)) * 0.5f;
-        var arLabel = !_arChecked ? "CHECKING AR..." : _arSupported ? "DRIVE IN YOUR ROOM  (AR)" : "AR NOT SUPPORTED";
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), arLabel, _arSupported ? UiKit.Look.Primary : UiKit.Look.Ghost, false, 16)
+        if (_garage != null && _garage.Texture != null) _ui.Image(hero, _garage.Texture);
+        _ui.Image(Inset(logoRect, U(4f)), _logo);
+
+        const int rows = 4;
+        var gap = U(10f);
+        var rowHeight = Mathf.Min(U(56f), (column.height - U(40f)) / rows - gap);
+        var y = column.y + (column.height - rows * (rowHeight + gap) - U(26f)) * 0.5f;
+        var arLabel = !_arChecked ? "CHECKING AR..." : _arSupported ? "DRIVE IN YOUR ROOM" : "AR NOT SUPPORTED";
+        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), arLabel, _arSupported ? UiKit.Look.Primary : UiKit.Look.Ghost, false, 17, UiIcon.Play)
             && _arSupported)
             BeginAR();
-        y += rowHeight + U(10f);
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "VIRTUAL ROOM", UiKit.Look.Accent, false, 16))
+        y += rowHeight + gap;
+        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "VIRTUAL HOUSE", UiKit.Look.Accent, false, 17, UiIcon.Home))
             EnterVirtualMode();
-        y += rowHeight + U(10f);
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "MULTIPLAYER", UiKit.Look.Normal, false, 16))
+        y += rowHeight + gap;
+        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "MULTIPLAYER", UiKit.Look.Normal, false, 17, UiIcon.People))
         {
             _lobbyUseAR = _arSupported;
             _screen = UiScreen.Lobby;
         }
 
-        y += rowHeight + U(10f);
-        var pair = (column.width - U(10f)) * 0.5f;
-        if (_ui.Button(new Rect(column.x, y, pair, rowHeight), "GARAGE", UiKit.Look.Normal, false, 16))
+        y += rowHeight + gap;
+        var pair = (column.width - gap) * 0.5f;
+        if (_ui.Button(new Rect(column.x, y, pair, rowHeight), "GARAGE", UiKit.Look.Normal, false, 16, UiIcon.Car))
             OpenGarage(UiScreen.Menu);
-        if (_ui.Button(new Rect(column.x + pair + U(10f), y, pair, rowHeight), "SETTINGS", UiKit.Look.Normal, false, 16))
+        if (_ui.Button(new Rect(column.x + pair + gap, y, pair, rowHeight), "SETTINGS", UiKit.Look.Normal, false, 16, UiIcon.Gear))
             OpenSettings(UiScreen.Menu);
-        y += rowHeight + U(12f);
+        y += rowHeight + U(10f);
         _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor]
             + " " + CarCatalog.Get(GameSettings.CarType).Name, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
     }
@@ -141,8 +173,10 @@ public sealed partial class ARDemoController
         }
         else
         {
-            preview = new Rect(area.x, area.y + U(40f), area.width, area.height * 0.42f);
-            info = new Rect(area.x, preview.yMax + U(10f), area.width, area.yMax - preview.yMax - U(10f));
+            // The info panel takes what its content needs; the car gets the rest of the screen.
+            var infoHeight = U(300f);
+            preview = new Rect(area.x, area.y + U(40f), area.width, area.height - U(50f) - infoHeight);
+            info = new Rect(area.x, area.yMax - infoHeight, area.width, infoHeight);
         }
 
         _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "GARAGE", 22, TextAnchor.MiddleLeft, Color.white, true);
@@ -172,12 +206,17 @@ public sealed partial class ARDemoController
 
         // Arrows to switch cars.
         var arrow = U(54f);
-        if (_ui.Button(new Rect(preview.x, preview.center.y - arrow * 0.5f, arrow, arrow), "◄", UiKit.Look.Normal, false, 22))
+        if (_ui.IconButton(new Rect(preview.x, preview.center.y - arrow * 0.5f, arrow, arrow), UiIcon.Back))
             GameSettings.CarType = (index + CarCatalog.All.Length - 1) % CarCatalog.All.Length;
-        if (_ui.Button(new Rect(preview.xMax - arrow, preview.center.y - arrow * 0.5f, arrow, arrow), "►", UiKit.Look.Normal, false, 22))
+        if (_ui.IconButton(new Rect(preview.xMax - arrow, preview.center.y - arrow * 0.5f, arrow, arrow), UiIcon.Play))
             GameSettings.CarType = (index + 1) % CarCatalog.All.Length;
-        _ui.Text(new Rect(preview.x, preview.yMax - U(26f), preview.width, U(22f)), (index + 1) + " / " + CarCatalog.All.Length + "   •   drag to rotate",
-            11, TextAnchor.MiddleCenter, UiKit.TextDim);
+        // Page dots for the car list, and a hint.
+        var dot = U(8f);
+        var dotsWidth = CarCatalog.All.Length * dot * 2f;
+        for (var i = 0; i < CarCatalog.All.Length; i++)
+            _ui.Fill(new Rect(preview.center.x - dotsWidth * 0.5f + i * dot * 2f, preview.yMax - U(30f), dot, dot * 0.5f),
+                i == index ? UiKit.AccentColor : new Color(1f, 1f, 1f, 0.25f));
+        _ui.Text(new Rect(preview.x, preview.yMax - U(22f), preview.width, U(18f)), "drag to rotate", 11, TextAnchor.MiddleCenter, UiKit.TextDim);
 
         _ui.Panel(info);
         var inner = Inset(info, U(14f));
@@ -186,7 +225,7 @@ public sealed partial class ARDemoController
         y += U(30f);
         _ui.Text(new Rect(inner.x, y, inner.width, U(20f)), spec.Class, 13, TextAnchor.MiddleLeft, UiKit.AccentColor);
         y += U(30f);
-        var barRow = Mathf.Min(U(28f), (inner.height - U(170f)) / 4f);
+        var barRow = Mathf.Clamp((inner.height - U(170f)) / 4f, U(18f), U(28f));
         StatBar(inner.x, ref y, inner.width, barRow, "Speed", spec.SpeedRating);
         StatBar(inner.x, ref y, inner.width, barRow, "Acceleration", spec.AccelRating);
         StatBar(inner.x, ref y, inner.width, barRow, "Handling", spec.HandlingRating);
@@ -325,13 +364,13 @@ public sealed partial class ARDemoController
         if (_net == null)
         {
             var half = (inner.width - U(10f)) * 0.5f;
-            if (_ui.Button(new Rect(inner.x, y, half, U(52f)), "HOST A GAME", UiKit.Look.Primary, false, 16))
+            if (_ui.Button(new Rect(inner.x, y, half, U(52f)), "HOST A GAME", UiKit.Look.Primary, false, 16, UiIcon.People))
             {
                 StartHosting();
                 EnterPlayAreaForNetwork();
             }
 
-            if (_ui.Button(new Rect(inner.x + half + U(10f), y, half, U(52f)), "JOIN A GAME", UiKit.Look.Accent, false, 16))
+            if (_ui.Button(new Rect(inner.x + half + U(10f), y, half, U(52f)), "JOIN A GAME", UiKit.Look.Accent, false, 16, UiIcon.Online))
                 StartBrowsing();
             y += U(62f);
         }
@@ -532,7 +571,7 @@ public sealed partial class ARDemoController
         var x = inner.x;
         var y = inner.y + U(40f);
 
-        if (_ui.Button(new Rect(x, y, columnWidth, row), "RESUME", UiKit.Look.Primary, false, 16)) ClosePause();
+        if (_ui.Button(new Rect(x, y, columnWidth, row), "RESUME", UiKit.Look.Primary, false, 16, UiIcon.Play)) ClosePause();
         y += row + U(8f);
 
         if (!IsClient)
@@ -563,13 +602,13 @@ public sealed partial class ARDemoController
             }
 
             var pairWidth = (columnWidth - U(8f)) * 0.5f;
-            if (_ui.Button(new Rect(x, y, pairWidth, row), "RESTART"))
+            if (_ui.Button(new Rect(x, y, pairWidth, row), "RESTART", UiKit.Look.Normal, false, 15, UiIcon.Restart))
             {
                 ClosePause();
                 StartRound();
             }
 
-            if (_ui.Button(new Rect(x + pairWidth + U(8f), y, pairWidth, row), "TRACKS", UiKit.Look.Accent))
+            if (_ui.Button(new Rect(x + pairWidth + U(8f), y, pairWidth, row), "TRACKS", UiKit.Look.Accent, false, 15, UiIcon.Flag))
                 _screen = UiScreen.Tracks;
 
             y += row + U(8f);
@@ -593,13 +632,13 @@ public sealed partial class ARDemoController
         if (!IsOnline)
         {
             var half = (columnWidth - U(8f)) * 0.5f;
-            if (_ui.Button(new Rect(x, y, half, row), "HOST GAME", UiKit.Look.Accent))
+            if (_ui.Button(new Rect(x, y, half, row), "HOST GAME", UiKit.Look.Accent, false, 15, UiIcon.People))
             {
                 StartHosting();
                 EnterPlayAreaForNetwork();
             }
 
-            if (_ui.Button(new Rect(x + half + U(8f), y, half, row), "JOIN GAME", UiKit.Look.Accent))
+            if (_ui.Button(new Rect(x + half + U(8f), y, half, row), "JOIN GAME", UiKit.Look.Accent, false, 15, UiIcon.Online))
             {
                 StartBrowsing();
                 _screen = UiScreen.Lobby;
@@ -613,10 +652,10 @@ public sealed partial class ARDemoController
 
         y += row + U(8f);
         var halfWidth = (columnWidth - U(8f)) * 0.5f;
-        if (_ui.Button(new Rect(x, y, halfWidth, row), "GARAGE")) OpenGarage(UiScreen.Pause);
-        if (_ui.Button(new Rect(x + halfWidth + U(8f), y, halfWidth, row), "SETTINGS")) OpenSettings(UiScreen.Pause);
+        if (_ui.Button(new Rect(x, y, halfWidth, row), "GARAGE", UiKit.Look.Normal, false, 15, UiIcon.Car)) OpenGarage(UiScreen.Pause);
+        if (_ui.Button(new Rect(x + halfWidth + U(8f), y, halfWidth, row), "SETTINGS", UiKit.Look.Normal, false, 15, UiIcon.Gear)) OpenSettings(UiScreen.Pause);
         y += row + U(8f);
-        if (_ui.Button(new Rect(x, y, columnWidth, row), "MAIN MENU", UiKit.Look.Ghost)) ReturnToMenu();
+        if (_ui.Button(new Rect(x, y, columnWidth, row), "MAIN MENU", UiKit.Look.Ghost, false, 15, UiIcon.Home)) ReturnToMenu();
     }
 
     // ------------------------------------------------------------------ in-game HUD
@@ -626,8 +665,7 @@ public sealed partial class ARDemoController
         var area = SafeRect();
         var pauseSize = U(46f);
         var pauseRect = new Rect(area.xMax - pauseSize, area.y, pauseSize, pauseSize);
-        if (interactive && _ui.Button(pauseRect, "II", UiKit.Look.Normal, false, 16)) OpenPause();
-        else if (!interactive) _ui.Button(pauseRect, "II", UiKit.Look.Normal, false, 16);
+        if (_ui.IconButton(pauseRect, UiIcon.Pause) && interactive) OpenPause();
 
         if (_arena == null)
         {
@@ -640,7 +678,9 @@ public sealed partial class ARDemoController
         {
             var chip = new Rect(pauseRect.x - U(96f), area.y + U(6f), U(88f), U(34f));
             _ui.Panel(chip);
-            _ui.Text(chip, IsHost ? "• " + _net.PlayerCount + "/" + LanSession.MaxPlayers : "• ONLINE", 13, TextAnchor.MiddleCenter, new Color(0.4f, 1f, 0.55f), true);
+            var online = new Color(0.4f, 1f, 0.55f);
+            _ui.Icon(new Rect(chip.x + U(8f), chip.y + U(7f), U(20f), U(20f)), UiIcon.Online, online);
+            _ui.Text(new Rect(chip.x + U(30f), chip.y, chip.width - U(34f), chip.height), IsHost ? _net.PlayerCount + "/" + LanSession.MaxPlayers : "ON", 14, TextAnchor.MiddleLeft, online, true);
         }
 
         Standings(area, pauseRect);
@@ -690,7 +730,9 @@ public sealed partial class ARDemoController
         var width = Mathf.Min(U(300f), pauseRect.x - area.x - U(110f));
         var chip = new Rect(area.x, area.y, width, U(52f));
         _ui.Panel(chip);
-        var inner = Inset(chip, U(8f));
+        var modeIcon = _mode == GameMode.Free ? UiIcon.Coin : _mode == GameMode.Battle ? UiIcon.Trophy : UiIcon.Flag;
+        _ui.Icon(new Rect(chip.x + U(10f), chip.center.y - U(13f), U(26f), U(26f)), modeIcon, UiKit.AccentColor);
+        var inner = new Rect(chip.x + U(44f), chip.y + U(8f), chip.width - U(52f), chip.height - U(16f));
         string title;
         string sub;
         var player = _player;
@@ -714,6 +756,15 @@ public sealed partial class ARDemoController
 
         _ui.Text(new Rect(inner.x, inner.y, inner.width, inner.height * 0.55f), title, 15, TextAnchor.MiddleLeft, Color.white, true);
         _ui.Text(new Rect(inner.x, inner.y + inner.height * 0.55f, inner.width, inner.height * 0.45f), sub, 12, TextAnchor.MiddleLeft, UiKit.TextDim);
+
+        // Race progress along the bottom edge of the chip.
+        if (_mode == GameMode.Race && player != null)
+        {
+            var progress = Mathf.Clamp01(player.Laps / LapCount);
+            var bar = new Rect(chip.x + U(10f), chip.yMax - U(5f), chip.width - U(20f), U(3f));
+            _ui.Fill(bar, new Color(1f, 1f, 1f, 0.12f));
+            _ui.Fill(new Rect(bar.x, bar.y, bar.width * progress, bar.height), UiKit.AccentColor);
+        }
 
         // The current instruction under the chip, fading out after a few seconds.
         var age = Time.unscaledTime - _messageTime;
@@ -745,19 +796,36 @@ public sealed partial class ARDemoController
 
     private void BigCenterText()
     {
+        // Each big word pops in: age is the time since it appeared.
         string big = null;
+        var age = 0f;
         var color = Color.white;
-        if (_state == GameState.Countdown) big = Mathf.CeilToInt(_countdown).ToString();
-        else if (_state == GameState.Racing && _knockoutUntil > Time.time) big = _knockoutText;
-        else if (_state == GameState.Racing && Time.time < _goFlashUntil) big = _mode == GameMode.Battle ? "PUSH!" : "GO!";
+        if (_state == GameState.Countdown)
+        {
+            var second = Mathf.CeilToInt(_countdown);
+            big = second.ToString();
+            age = second - _countdown;
+        }
+        else if (_state == GameState.Racing && _knockoutUntil > Time.time)
+        {
+            big = _knockoutText;
+            age = 1.8f - (_knockoutUntil - Time.time);
+            color = UiKit.AccentColor;
+        }
+        else if (_state == GameState.Racing && Time.time < _goFlashUntil)
+        {
+            big = _mode == GameMode.Battle ? "PUSH!" : "GO!";
+            age = 0.9f - (_goFlashUntil - Time.time);
+            color = new Color(0.45f, 1f, 0.5f);
+        }
         else if (_hint != null && Time.time < _hintUntil && _state == GameState.Racing)
         {
-            _ui.Text(new Rect(0f, H * 0.24f, W, U(40f)), _hint, 26, TextAnchor.MiddleCenter, UiKit.AccentColor, true, true);
+            _ui.PopText(new Rect(0f, H * 0.24f, W, U(40f)), _hint, 26, UiKit.AccentColor, 1.4f - (_hintUntil - Time.time));
             return;
         }
 
         if (big == null) return;
-        _ui.Text(new Rect(0f, H * 0.28f, W, U(90f)), big, 64, TextAnchor.MiddleCenter, color, true, true);
+        _ui.PopText(new Rect(0f, H * 0.28f, W, U(90f)), big, 72, color, age);
     }
 
     private void Toasts(Rect area)
@@ -773,14 +841,14 @@ public sealed partial class ARDemoController
     /// <summary>View and build tools in a column under the status chip.</summary>
     private float ToolColumn(Rect area)
     {
-        var width = U(84f);
-        var height = U(36f);
+        var width = U(104f);
+        var height = U(38f);
         var y = area.y + U(52f) + U(50f);
         var x = area.x;
         if (_virtualMode && !_buildMode)
         {
-            var camLabel = _view == ViewMode.Phone ? "CAM: PHONE" : _view == ViewMode.Chase ? "CAM: BEHIND" : "CAM: DRIVER";
-            if (_ui.Button(new Rect(x, y, width, height), camLabel, UiKit.Look.Normal, false, 11))
+            var camLabel = _view == ViewMode.Phone ? "PHONE" : _view == ViewMode.Chase ? "BEHIND" : "DRIVER";
+            if (_ui.Button(new Rect(x, y, width, height), camLabel, UiKit.Look.Normal, false, 12, UiIcon.Camera))
             {
                 // PHONE -> BEHIND -> DRIVER -> PHONE
                 _view = (ViewMode)(((int)_view + 1) % 3);
@@ -793,7 +861,7 @@ public sealed partial class ARDemoController
             y += height + U(6f);
             if (_view == ViewMode.Phone)
             {
-                if (_ui.Button(new Rect(x, y, width, height), "MOVE", UiKit.Look.Normal, false, 11) && _phoneView != null)
+                if (_ui.Button(new Rect(x, y, width, height), "MOVE", UiKit.Look.Normal, false, 12, UiIcon.Pin) && _phoneView != null)
                 {
                     _phoneView.NextSpot();
                     ShowToast("Standing at " + _phoneView.SpotName);
@@ -805,14 +873,14 @@ public sealed partial class ARDemoController
 
         if (!_virtualMode && _depthDetector != null && _depthDetector.DepthSupported && !_buildMode)
         {
-            if (_ui.Button(new Rect(x, y, width, height), _depthDetector.ShowOverlay ? "SCAN: ON" : "SCAN: OFF", UiKit.Look.Normal, _depthDetector.ShowOverlay, 11))
+            if (_ui.Button(new Rect(x, y, width, height), _depthDetector.ShowOverlay ? "SCAN ON" : "SCAN OFF", UiKit.Look.Normal, _depthDetector.ShowOverlay, 12, UiIcon.Radar))
                 _depthDetector.ShowOverlay = !_depthDetector.ShowOverlay;
             y += height + U(6f);
         }
 
         if (_mode == GameMode.Free && !IsOnline)
         {
-            if (_ui.Button(new Rect(x, y, width, height), _buildMode ? "DONE" : "BUILD", _buildMode ? UiKit.Look.Primary : UiKit.Look.Normal, false, 12))
+            if (_ui.Button(new Rect(x, y, width, height), _buildMode ? "DONE" : "BUILD", _buildMode ? UiKit.Look.Primary : UiKit.Look.Normal, false, 12, UiIcon.Cone))
             {
                 _buildMode = !_buildMode;
                 SetMessage(_buildMode ? BuildMessage() : FreeDriveMessage());
@@ -832,7 +900,7 @@ public sealed partial class ARDemoController
         var height = U(54f);
         var x = area.center.x - (width * count + gap * (count - 1)) * 0.5f;
         var y = area.yMax - height;
-        if (_ui.Button(new Rect(x, y, width, height), "CONE", UiKit.Look.Normal, _buildKind == ObstacleKind.Cone)) { _buildKind = ObstacleKind.Cone; SetMessage(BuildMessage()); }
+        if (_ui.Button(new Rect(x, y, width, height), "CONE", UiKit.Look.Normal, _buildKind == ObstacleKind.Cone, 14, UiIcon.Cone)) { _buildKind = ObstacleKind.Cone; SetMessage(BuildMessage()); }
         if (_ui.Button(new Rect(x + (width + gap), y, width, height), "TYRES", UiKit.Look.Normal, _buildKind == ObstacleKind.Tyres)) { _buildKind = ObstacleKind.Tyres; SetMessage(BuildMessage()); }
         if (_ui.Button(new Rect(x + (width + gap) * 2f, y, width, height), "WALL", UiKit.Look.Normal, _buildKind == ObstacleKind.Wall)) { _buildKind = ObstacleKind.Wall; SetMessage(BuildMessage()); }
         if (_ui.Button(new Rect(x + (width + gap) * 3f, y, width, height), "CLEAR", UiKit.Look.Danger)) ClearPlacedObstacles();
@@ -908,7 +976,7 @@ public sealed partial class ARDemoController
             return;
         }
 
-        if (_ui.Button(new Rect(inner.x, buttonY, half, U(46f)), "AGAIN", UiKit.Look.Primary, false, 16)) StartRound();
+        if (_ui.Button(new Rect(inner.x, buttonY, half, U(46f)), "AGAIN", UiKit.Look.Primary, false, 16, UiIcon.Restart)) StartRound();
         if (_ui.Button(new Rect(inner.x + half + U(10f), buttonY, half, U(46f)), "MENU", UiKit.Look.Ghost, false, 16)) OpenPause();
     }
 
