@@ -54,6 +54,7 @@ public sealed partial class ARDemoController
             case UiScreen.Settings: SettingsScreen(); break;
             case UiScreen.Garage: GarageScreen(); break;
             case UiScreen.Tracks: TracksScreen(); break;
+            case UiScreen.Locations: LocationsScreen(); break;
             case UiScreen.Pause: PauseScreen(); break;
         }
 
@@ -134,8 +135,8 @@ public sealed partial class ARDemoController
             && _arSupported)
             BeginAR();
         y += rowHeight + gap;
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "VIRTUAL HOUSE", UiKit.Look.Accent, false, 17, UiIcon.Home))
-            EnterVirtualMode();
+        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "PLAY WITHOUT AR", UiKit.Look.Accent, false, 17, UiIcon.Home))
+            _screen = UiScreen.Locations;
         y += rowHeight + gap;
         if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "MULTIPLAYER", UiKit.Look.Normal, false, 17, UiIcon.People))
         {
@@ -586,6 +587,13 @@ public sealed partial class ARDemoController
                 new[] { _arSupported ? "MY ROOM (AR)" : "AR N/A", "VIRTUAL ROOM" }, _lobbyUseAR ? 0 : 1);
             _lobbyUseAR = choice == 0 && _arSupported;
             y += row + U(10f);
+            if (!_lobbyUseAR)
+            {
+                _ui.Text(new Rect(inner.x, y, U(110f), row), "Location", 14, TextAnchor.MiddleLeft, Color.white);
+                GameSettings.Location = (GameLocation)_ui.Segmented(new Rect(inner.x + U(110f), y, inner.width - U(110f), row),
+                    VirtualHouse.LocationNames, (int)GameSettings.Location, 12);
+                y += row + U(10f);
+            }
         }
 
         if (_net == null)
@@ -648,6 +656,64 @@ public sealed partial class ARDemoController
 
         if (_lobbyUseAR && _arSupported) BeginAR();
         else EnterVirtualMode();
+    }
+
+    // ------------------------------------------------------------------ locations
+
+    private static readonly Color[] LocationTints =
+    {
+        new Color(0.62f, 0.46f, 0.30f), new Color(0.20f, 0.55f, 0.25f), new Color(0.30f, 0.36f, 0.46f)
+    };
+
+    private static readonly UiIcon[] LocationIcons = { UiIcon.Home, UiIcon.Flag, UiIcon.Car };
+
+    /// <summary>Pick where to drive without AR: house, backyard or workshop.</summary>
+    private void LocationsScreen()
+    {
+        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
+        var area = SafeRect();
+        _ui.Text(new Rect(area.x, area.y, area.width, U(32f)), "CHOOSE A LOCATION", 22, TextAnchor.MiddleLeft, Color.white, true);
+        if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "BACK", UiKit.Look.Ghost, false, 14, UiIcon.Back))
+            _screen = UiScreen.Menu;
+
+        var count = VirtualHouse.LocationNames.Length;
+        var top = area.y + U(48f);
+        var bottom = area.yMax - U(64f);
+        var gap = U(12f);
+        for (var i = 0; i < count; i++)
+        {
+            Rect card;
+            if (Landscape)
+            {
+                var width = (area.width - gap * (count - 1)) / count;
+                card = new Rect(area.x + i * (width + gap), top, width, bottom - top);
+            }
+            else
+            {
+                var height = Mathf.Min(U(150f), (bottom - top - gap * (count - 1)) / count);
+                card = new Rect(area.x, top + i * (height + gap), area.width, height);
+            }
+
+            var selected = (int)GameSettings.Location == i;
+            if (_ui.Button(card, null, UiKit.Look.Ghost, selected)) GameSettings.Location = (GameLocation)i;
+            // Tinted header band with the icon, then name and description.
+            var band = new Rect(card.x + U(6f), card.y + U(6f), card.width - U(12f), Mathf.Min(card.height * 0.45f, U(110f)));
+            _ui.Fill(band, LocationTints[i]);
+            var iconSize = Mathf.Min(band.height * 0.6f, U(56f));
+            _ui.Icon(new Rect(band.center.x - iconSize * 0.5f, band.center.y - iconSize * 0.5f, iconSize, iconSize), LocationIcons[i], new Color(1f, 1f, 1f, 0.9f));
+            var textTop = band.yMax + U(6f);
+            _ui.Text(new Rect(card.x + U(12f), textTop, card.width - U(24f), U(26f)), VirtualHouse.LocationNames[i], 17, TextAnchor.MiddleLeft,
+                selected ? UiKit.AccentColor : Color.white, true);
+            _ui.Text(new Rect(card.x + U(12f), textTop + U(26f), card.width - U(24f), card.yMax - textTop - U(30f)), VirtualHouse.LocationBlurbs[i], 12,
+                TextAnchor.UpperLeft, UiKit.TextDim);
+        }
+
+        var playWidth = Mathf.Min(U(320f), area.width);
+        if (_ui.Button(new Rect(area.center.x - playWidth * 0.5f, area.yMax - U(52f), playWidth, U(52f)), "DRIVE", UiKit.Look.Primary, false, 18, UiIcon.Play))
+        {
+            GameSettings.Save();
+            EnterVirtualMode();
+        }
     }
 
     private Rect CenterPanel(Rect area, float maxWidth, float height)

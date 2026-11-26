@@ -20,7 +20,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private enum GameState { Placing, Ready, Countdown, Racing, Finished }
     // Values are sent over the network: keep Race = 0 and Battle = 1.
     private enum GameMode { Race, Battle, Free }
-    private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage, Tracks }
+    private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage, Tracks, Locations }
 
     private static readonly List<ARRaycastHit> RaycastHits = new List<ARRaycastHit>();
     private const float FreeARHalfExtent = ARDepthObstacleDetector.HalfExtent - 0.15f;
@@ -327,11 +327,55 @@ public sealed partial class ARDemoController : MonoBehaviour
         SetMessage("Move your phone slowly over the floor, then tap it to place your play area.");
     }
 
+    private GameLocation _location;
+
+    /// <summary>Builds (or rebuilds) the virtual location: geometry, camera spots, light and sky.</summary>
+    private void BuildLocation(GameLocation location)
+    {
+        if (_virtualTable != null)
+        {
+            _virtualTable.gameObject.SetActive(false);
+            Destroy(_virtualTable.gameObject);
+            VirtualHouse.Release();
+        }
+
+        _location = location;
+        _virtualTable = new GameObject("Virtual " + location).transform;
+        _room = VirtualHouse.Build(_virtualTable, location);
+        _phoneView = new PhoneViewCamera(_room.CameraSpots);
+        _phoneView.FollowRoom(4, Vector3.zero); // the middle zone holds the track and arena
+        if (_arCamera != null)
+        {
+            _arCamera.backgroundColor = _room.Background;
+            _arCamera.farClipPlane = _room.FarClip;
+        }
+
+        if (_keyLight != null)
+        {
+            _keyLight.transform.rotation = Quaternion.LookRotation(_room.SunDirection);
+            _keyLight.color = _room.SunColor;
+            _keyLight.intensity = _room.SunIntensity;
+        }
+
+        ConfigureShadows(_room.ShadowDistance);
+        SetAmbient(_room.AmbientSky, _room.AmbientEquator, _room.AmbientGround);
+    }
+
     private void EnterVirtualMode()
     {
         _garage?.Release();
         _screen = UiScreen.Game;
-        if (_virtualMode) return;
+        if (_virtualMode)
+        {
+            if (GameSettings.Location != _location)
+            {
+                BuildLocation(GameSettings.Location);
+                StartRound();
+            }
+
+            return;
+        }
+
         if (_arena != null) ResetToScanning();
         _virtualMode = true;
 
@@ -361,27 +405,11 @@ public sealed partial class ARDemoController : MonoBehaviour
             if (_arCamera.TryGetComponent<ARCameraManager>(out var cameraManager)) cameraManager.enabled = false;
             ARRigSetup.SetPoseDriverEnabled(_arCamera, false);
             _arCamera.clearFlags = CameraClearFlags.SolidColor;
-            _arCamera.backgroundColor = new Color(0.80f, 0.80f, 0.78f);
-            _arCamera.farClipPlane = 20f;
         }
 
         if (_session != null) _session.enabled = false;
 
-        // The living room: sunlight through the window, warm indoor ambient.
-        _virtualTable = new GameObject("Virtual Room").transform;
-        _room = VirtualHouse.Build(_virtualTable);
-        _phoneView = new PhoneViewCamera(_room.CameraSpots);
-        _phoneView.FollowRoom(4, Vector3.zero); // start in the living room
-        if (_keyLight != null)
-        {
-            _keyLight.transform.rotation = Quaternion.LookRotation(_room.SunDirection);
-            _keyLight.color = new Color(1f, 0.95f, 0.86f);
-            _keyLight.intensity = 0.88f;
-        }
-
-        ConfigureShadows(4.5f);
-        SetAmbient(new Color(0.50f, 0.52f, 0.56f), new Color(0.40f, 0.37f, 0.34f), new Color(0.24f, 0.20f, 0.16f));
-
+        BuildLocation(GameSettings.Location);
         _arena = new GameObject("Bounded Play Area").transform;
         _arena.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
         CreateArenaVisuals();
@@ -395,6 +423,7 @@ public sealed partial class ARDemoController : MonoBehaviour
         _net = null;
         Time.timeScale = 1f;
         AudioListener.pause = false;
+        VirtualHouse.Release(); // runtime meshes outlive the scene
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 

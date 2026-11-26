@@ -9,7 +9,7 @@ using UnityEngine;
 /// bed legs only, so the car can drive underneath), and walls block everywhere but doorways.
 /// The living room in the middle stays clear enough for the race track and battle arena.
 /// </summary>
-public static class VirtualHouse
+public static partial class VirtualHouse
 {
     public const float RoomSize = 5f;
     public const float Wall = 0.12f;
@@ -33,6 +33,17 @@ public static class VirtualHouse
         public Rect Bounds;
         public Vector3 SunDirection;
 
+        // How the location is lit and framed (indoor defaults: the house).
+        public bool OpenPlan;   // no interior walls: the chase camera may roam the whole area
+        public Color Background = new Color(0.80f, 0.80f, 0.78f);
+        public Color SunColor = new Color(1f, 0.95f, 0.86f);
+        public float SunIntensity = 0.88f;
+        public Color AmbientSky = new Color(0.50f, 0.52f, 0.56f);
+        public Color AmbientEquator = new Color(0.40f, 0.37f, 0.34f);
+        public Color AmbientGround = new Color(0.24f, 0.20f, 0.16f);
+        public float FarClip = 20f;
+        public float ShadowDistance = 4.5f;
+
         /// <summary>Room index 0..8 (column + 3 * row) for a floor point.</summary>
         public int RoomAt(Vector2 point)
         {
@@ -43,6 +54,7 @@ public static class VirtualHouse
 
         public Rect RoomRect(int room)
         {
+            if (OpenPlan) return Bounds;
             var center = RoomCenter(room);
             return new Rect(center.x - RoomSize * 0.5f, center.y - RoomSize * 0.5f, RoomSize, RoomSize);
         }
@@ -58,6 +70,7 @@ public static class VirtualHouse
         WallWarm, WallYellow, WallBlue, WallMint, WallGreen, WallGrey, WallTile, Ceiling, Trim,
         Wood, DarkWood, White, Black, Steel, Chrome, FabricBlue, FabricMustard, FabricBeige, FabricGreen,
         Cardboard, Terracotta, Leaves, Porcelain, Stone, ToyRed, ToyBlue, ToyYellow, ToyGreen, Rubber, Orange, Bedding,
+        Grass, Paving, Brick, Sand, Water, Fence, Hedge, Bark, Tarmac, LinePaint, Machine, Pallet, Glass,
         Count
     }
 
@@ -106,6 +119,19 @@ public static class VirtualHouse
         m[(int)M.Rubber] = Mat(new Color(0.06f, 0.06f, 0.065f), 0.2f);
         m[(int)M.Orange] = Mat(new Color(0.92f, 0.42f, 0.08f), 0.45f, 0.3f);
         m[(int)M.Bedding] = Mat(new Color(0.94f, 0.94f, 0.96f), 0.1f, 0f, ProceduralTextures.Fabric);
+        m[(int)M.Grass] = Mat(new Color(0.92f, 0.95f, 0.90f), 0.12f, 0f, ProceduralTextures.Grass);
+        m[(int)M.Paving] = Mat(new Color(0.74f, 0.72f, 0.68f), 0.2f, 0f, ProceduralTextures.Paving);
+        m[(int)M.Brick] = Mat(Color.white, 0.1f, 0f, ProceduralTextures.Brick);
+        m[(int)M.Sand] = Mat(new Color(0.85f, 0.82f, 0.74f), 0.05f, 0f, ProceduralTextures.Sand);
+        m[(int)M.Water] = Mat(new Color(0.20f, 0.62f, 0.80f), 0.95f, 0.1f);
+        m[(int)M.Fence] = Mat(new Color(0.72f, 0.60f, 0.46f), 0.25f, 0f, ProceduralTextures.Wood);
+        m[(int)M.Hedge] = Mat(new Color(0.14f, 0.34f, 0.14f), 0.15f);
+        m[(int)M.Bark] = Mat(new Color(0.36f, 0.26f, 0.18f), 0.1f);
+        m[(int)M.Tarmac] = Mat(new Color(0.56f, 0.56f, 0.57f), 0.25f, 0f, ProceduralTextures.Concrete);
+        m[(int)M.LinePaint] = Mat(new Color(0.98f, 0.80f, 0.12f), 0.4f);
+        m[(int)M.Machine] = Mat(new Color(0.14f, 0.36f, 0.62f), 0.55f, 0.4f);
+        m[(int)M.Pallet] = Mat(new Color(0.80f, 0.68f, 0.50f), 0.15f, 0f, ProceduralTextures.Wood);
+        m[(int)M.Glass] = Mat(new Color(0.30f, 0.38f, 0.44f), 0.92f, 0.2f);
         _materials = m;
         return m;
     }
@@ -128,6 +154,22 @@ public static class VirtualHouse
         }
 
         private Vector3 P(float x, float y, float z) => new Vector3(Center.x + x, y, Center.y + z);
+
+        /// <summary>Large structure (walls, fences): drawn with the shell, so it receives but does not cast shadows.</summary>
+        public void ShellBox(M m, float x, float z, float angle, float y0, float y1, float hx, float hz, bool solid = true)
+        {
+            var right = CarCollision.Right(angle);
+            var forward = CarCollision.Forward(angle);
+            B.AddBoxAxes((int)m, P(x, (y0 + y1) * 0.5f, z), new Vector3(right.x, 0f, right.y) * hx,
+                Vector3.up * ((y1 - y0) * 0.5f), new Vector3(forward.x, 0f, forward.y) * hz);
+            if (solid && y0 < 0.08f) Obstacles.Add(WorldObstacle.Box(Center + new Vector2(x, z), new Vector2(hx, hz), angle));
+        }
+
+        /// <summary>Flat floor area with its own material (lawn, patio, sand), slightly above the ground.</summary>
+        public void Ground(M m, float x, float z, float hx, float hz, float y)
+        {
+            B.AddQuad((int)m, P(x - hx, y, z - hz), P(x - hx, y, z + hz), P(x + hx, y, z + hz), P(x + hx, y, z - hz), Vector3.up);
+        }
 
         public void Box(M m, float x, float z, float angle, float y0, float y1, float hx, float hz, bool solid = true)
         {
@@ -172,6 +214,16 @@ public static class VirtualHouse
     }
 
     // ------------------------------------------------------------------ build
+
+    public static Info Build(Transform parent, GameLocation location)
+    {
+        switch (location)
+        {
+            case GameLocation.Backyard: return BuildBackyard(parent);
+            case GameLocation.Workshop: return BuildWorkshop(parent);
+            default: return Build(parent);
+        }
+    }
 
     public static Info Build(Transform parent)
     {
@@ -516,10 +568,20 @@ public static class VirtualHouse
     // ------------------------------------------------------------------ renderers
 
     private static readonly List<int> Used = new List<int>();
+    private static readonly List<Object> Built = new List<Object>();
+
+    /// <summary>Frees the meshes and materials made for the last location (before building another).</summary>
+    public static void Release()
+    {
+        foreach (var item in Built)
+            if (item != null) Object.Destroy(item);
+        Built.Clear();
+    }
 
     private static void CreateRenderer(Transform parent, string name, RaceTrack.FlatMeshBuilder builder, Material[] materials, bool castShadows)
     {
         var mesh = builder.BuildCompact(name, Used);
+        Built.Add(mesh);
         var go = new GameObject(name);
         go.transform.SetParent(parent, false);
         go.AddComponent<MeshFilter>().sharedMesh = mesh;
@@ -558,6 +620,8 @@ public static class VirtualHouse
         go.AddComponent<MeshFilter>().sharedMesh = mesh;
         var renderer = go.AddComponent<MeshRenderer>();
         renderer.sharedMaterial = new Material(shader) { name = "Windows and Lights", renderQueue = 2450 };
+        Built.Add(mesh);
+        Built.Add(renderer.sharedMaterial);
         renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
     }
 
@@ -565,6 +629,7 @@ public static class VirtualHouse
     private static void CreateMat(Transform parent, Vector2 center, Vector2 half, Material material)
     {
         var mesh = new Mesh { name = "Mat" };
+        Built.Add(mesh);
         const float y = 0.0012f;
         mesh.SetVertices(new[]
         {

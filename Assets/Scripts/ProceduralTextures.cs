@@ -33,6 +33,53 @@ public static class ProceduralTextures
     public static Texture2D KidsCarpet => _kidsCarpet ? _kidsCarpet : (_kidsCarpet = Build("Kids Carpet", 256, KidsCarpetPixel));
     public static Texture2D Concrete => _concrete ? _concrete : (_concrete = Build("Concrete", 256, ConcretePixel));
 
+
+    private static Texture2D _grass;
+    private static Texture2D _paving;
+    private static Texture2D _brick;
+    private static Texture2D _sand;
+
+    /// <summary>Mown lawn with faint mowing stripes.</summary>
+    public static Texture2D Grass => _grass ? _grass : (_grass = Build("Grass", 256, GrassPixel));
+    /// <summary>Square stone slabs with joints (patio, paths).</summary>
+    public static Texture2D Paving => _paving ? _paving : (_paving = Build("Paving", 128, PavingPixel));
+    public static Texture2D Brick => _brick ? _brick : (_brick = Build("Brick", 128, BrickPixel));
+    public static Texture2D Sand => _sand ? _sand : (_sand = Build("Sand", 128, SandPixel));
+
+    private static Color GrassPixel(float u, float v)
+    {
+        var blades = (Noise(u, v, 128, 211) - 0.5f) * 0.22f + (Noise(u, v, 64, 213) - 0.5f) * 0.12f;
+        var patches = (Fbm(u, v, 4, 3, 217) - 0.5f) * 0.25f;
+        var stripe = Mathf.Repeat(u * 2f, 1f) < 0.5f ? 0.02f : -0.02f;
+        var g = 0.52f + blades + patches + stripe;
+        return new Color(g * 0.52f, g, g * 0.32f, 1f);
+    }
+
+    private static Color PavingPixel(float u, float v)
+    {
+        var joint = Mathf.Repeat(u * 2f, 1f) < 0.035f || Mathf.Repeat(v * 2f, 1f) < 0.035f;
+        if (joint) return new Color(0.38f, 0.37f, 0.35f, 1f);
+        var slab = (Mathf.FloorToInt(u * 2f) * 7 + Mathf.FloorToInt(v * 2f) * 13) % 5 * 0.025f;
+        var value = 0.72f + slab + (Noise(u, v, 64, 221) - 0.5f) * 0.10f;
+        return new Color(value, value * 0.96f, value * 0.90f, 1f);
+    }
+
+    private static Color BrickPixel(float u, float v)
+    {
+        var row = Mathf.FloorToInt(v * 8f);
+        var x = u * 4f + (row % 2) * 0.5f;
+        var mortar = Mathf.Repeat(v * 8f, 1f) < 0.1f || Mathf.Repeat(x, 1f) < 0.05f;
+        if (mortar) return new Color(0.78f, 0.76f, 0.72f, 1f);
+        var tone = ((Mathf.FloorToInt(x) * 17 + row * 31) % 7) * 0.03f + (Noise(u, v, 64, 231) - 0.5f) * 0.08f;
+        return new Color(0.62f + tone, 0.30f + tone * 0.6f, 0.22f + tone * 0.4f, 1f);
+    }
+
+    private static Color SandPixel(float u, float v)
+    {
+        var value = 0.86f + (Noise(u, v, 128, 241) - 0.5f) * 0.16f + (Fbm(u, v, 4, 2, 243) - 0.5f) * 0.10f;
+        return new Color(value, value * 0.88f, value * 0.66f, 1f);
+    }
+
     private static Color CheckerPixel(float u, float v)
     {
         var grout = Mathf.Repeat(u * 2f, 1f) < 0.03f || Mathf.Repeat(v * 2f, 1f) < 0.03f;

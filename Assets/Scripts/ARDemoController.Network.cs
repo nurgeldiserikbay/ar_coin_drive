@@ -128,6 +128,7 @@ public sealed partial class ARDemoController
             writer.Write((byte)RaceTrack.Shared.Size);
             writer.Write((byte)_arenaShape);
             writer.Write((byte)_arenaSize);
+            writer.Write((byte)(_virtualMode ? (int)_location : 255));
             writer.Write(_countdown);
             writer.Write(_raceTime);
             writer.Write(_battleRadius);
@@ -211,6 +212,10 @@ public sealed partial class ARDemoController
                 var trackSize = (TrackSize)reader.ReadByte();
                 var arenaShape = (ArenaShape)reader.ReadByte();
                 var arenaSize = Mathf.Clamp(reader.ReadByte(), 0, 2);
+                var hostLocation = reader.ReadByte();
+                // A guest in a virtual world drives in the host's location (the host's walls and furniture are what it collides with).
+                if (_virtualMode && hostLocation <= 2 && (GameLocation)hostLocation != _location)
+                    BuildLocation((GameLocation)hostLocation);
                 if (layout != RaceTrack.Shared.Layout || trackSize != RaceTrack.Shared.Size || arenaShape != _arenaShape || arenaSize != _arenaSize)
                 {
                     RaceTrack.Select(layout, trackSize);

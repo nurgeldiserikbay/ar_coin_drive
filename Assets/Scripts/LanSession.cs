@@ -21,7 +21,7 @@ public sealed class LanSession : IDisposable
 
     public const int GamePort = 47777;
     public const int MaxPlayers = 4;
-    private const byte Version = 5;
+    private const byte Version = 6;
     private const byte Probe = (byte)'P';
     private const byte Offer = (byte)'O';
     private const byte JoinRequest = (byte)'J';

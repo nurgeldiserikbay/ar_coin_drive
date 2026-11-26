@@ -39,6 +39,7 @@ public static class GameSettings
     public static TrackSize TrackSize { get => (TrackSize)Mathf.Clamp(GetInt("TrackSize", 1), 0, 2); set => SetInt("TrackSize", (int)value); }
     public static ArenaShape Arena { get => (ArenaShape)Mathf.Clamp(GetInt("Arena", 0), 0, 1); set => SetInt("Arena", (int)value); }
     public static int ArenaSize { get => Mathf.Clamp(GetInt("ArenaSize", 1), 0, 2); set => SetInt("ArenaSize", value); }
+    public static GameLocation Location { get => (GameLocation)Mathf.Clamp(GetInt("Location", 0), 0, 2); set => SetInt("Location", (int)value); }
     public static int CarType { get => Mathf.Clamp(GetInt("CarType", 0), 0, CarCatalog.All.Length - 1); set => SetInt("CarType", value); }
     /// <summary>Battery saver caps the game at 30 FPS instead of 60.</summary>
     public static bool BatterySaver { get => GetInt("BatterySaver", 0) == 1; set => SetInt("BatterySaver", value ? 1 : 0); }
