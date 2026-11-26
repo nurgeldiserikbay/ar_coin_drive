@@ -12,11 +12,21 @@ using UnityEngine;
 /// </summary>
 public static class GameAds
 {
+    // Google's public sample IDs, used by the test APK (ACD_TEST_ADS): they only show test ads.
+    public const string TestAppId = "ca-app-pub-3940256099942544~3347511713";
+    private const string TestInterstitialUnitId = "ca-app-pub-3940256099942544/1033173712";
+    private const string TestRewardedUnitId = "ca-app-pub-3940256099942544/5224354917";
+
     // AdMob app "AR Coin Drive" (publisher ca-app-pub-9702825788968948). Never click your own
     // live ads: test on a phone added under AdMob > Settings > Test devices.
     public const string AndroidAppId = "ca-app-pub-9702825788968948~7895231377";
+#if ACD_TEST_ADS
+    public const string InterstitialUnitId = TestInterstitialUnitId;
+    public const string RewardedUnitId = TestRewardedUnitId;
+#else
     public const string InterstitialUnitId = "ca-app-pub-9702825788968948/1220856863";
     public const string RewardedUnitId = "ca-app-pub-9702825788968948/8784807060";
+#endif
     public static bool UsesTestIds => AndroidAppId.StartsWith("ca-app-pub-3940256099942544");
 
     /// <summary>The published privacy policy (the same URL as in Play Console). Empty hides the link.</summary>

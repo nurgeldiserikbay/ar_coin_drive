@@ -75,6 +75,55 @@ public static class ARCoinDriveRelease
         }
     }
 
+    /// <summary>
+    /// A phone test build (.apk, debug-signed) that shows Google's TEST ads, so the real ads can be
+    /// tried without risking the AdMob account. Never upload it to Google Play.
+    /// </summary>
+    [MenuItem("AR Coin Drive/Build Test APK (test ads)")]
+    public static void BuildTestApk()
+    {
+        var ok = false;
+        try
+        {
+            ARCoinDriveSceneBuilder.CreateDemoScene();
+            PlayerSettings.companyName = "ARCoinDrive";
+            PlayerSettings.productName = "AR Coin Drive";
+            PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, PackageName);
+            PlayerSettings.bundleVersion = VersionName;
+            PlayerSettings.Android.bundleVersionCode = VersionCode;
+            PlayerSettings.SetScriptingBackend(NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
+            PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+            PlayerSettings.Android.useCustomKeystore = false;
+            EditorUserBuildSettings.buildAppBundle = false;
+
+            AdMobSetup.ForceTestIds = true;
+            Directory.CreateDirectory("build");
+            var path = "build/ARCoinDrive-" + VersionName + "-test-ads.apk";
+            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = new[] { "Assets/Scenes/ARCoinDriveDemo.unity" },
+                locationPathName = path,
+                target = BuildTarget.Android,
+                targetGroup = BuildTargetGroup.Android,
+                extraScriptingDefines = new[] { "ACD_TEST_ADS" },
+                options = BuildOptions.None
+            });
+
+            Debug.Log("TEST_BUILD " + report.summary.result + " errors=" + report.summary.totalErrors + " path=" + path);
+            ok = report.summary.result == BuildResult.Succeeded;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("TEST_BUILD_FAILED " + e.Message);
+        }
+
+        // Put the real app ID back into the plugin settings for the next release build
+        // (before Exit, which would skip a finally block).
+        AdMobSetup.ForceTestIds = false;
+        AdMobSetup.Apply();
+        if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
+    }
+
     private static Dictionary<string, string> ReadProperties()
     {
         var path = Environment.GetEnvironmentVariable("ACD_RELEASE_PROPERTIES");

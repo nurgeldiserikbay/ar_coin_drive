@@ -12,6 +12,9 @@ using UnityEngine;
 /// </summary>
 public class AdMobSetup : IPreprocessBuildWithReport
 {
+    /// <summary>Set by the test-APK build: writes Google's sample app ID instead of the real one.</summary>
+    public static bool ForceTestIds;
+
     public int callbackOrder => -100;
 
     public void OnPreprocessBuild(BuildReport report)
@@ -30,10 +33,11 @@ public class AdMobSetup : IPreprocessBuildWithReport
         var serialized = new SerializedObject(settings);
         var appId = serialized.FindProperty("adMobAndroidAppId");
         if (appId == null) throw new BuildFailedException("Google Mobile Ads settings have no adMobAndroidAppId field.");
-        appId.stringValue = GameAds.AndroidAppId;
+        appId.stringValue = ForceTestIds ? GameAds.TestAppId : GameAds.AndroidAppId;
         serialized.ApplyModifiedPropertiesWithoutUndo();
         EditorUtility.SetDirty(settings);
         AssetDatabase.SaveAssets();
-        if (GameAds.UsesTestIds) Debug.LogWarning("AR Coin Drive: AdMob uses Google's TEST IDs; replace them in GameAds.cs before release.");
+        if (ForceTestIds) Debug.Log("AR Coin Drive: test build, AdMob uses Google's sample app ID.");
+        else if (GameAds.UsesTestIds) Debug.LogWarning("AR Coin Drive: AdMob uses Google's TEST IDs; replace them in GameAds.cs before release.");
     }
 }
