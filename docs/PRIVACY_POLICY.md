@@ -1,8 +1,10 @@
 # AR Coin Drive — Privacy Policy
 
-_Last updated: [DATE]_
+_Published copy: Google Doc https://docs.google.com/document/d/1ROFQmTNnysuV_sqmUXvaxINBE8Jw5vGExDvVXngPVJA (the Google Doc is the source of truth)._
 
-This policy explains what information the Android game **AR Coin Drive** ("the game", package `com.arcoindrive.game`), published by **[PUBLISHER NAME]** ("we"), uses and why. The game is intended for players aged 13 and over.
+_Last updated: 26 November 2026_
+
+This policy explains what information the Android game **AR Coin Drive** ("the game", package `com.arcoindrive.game`), published by **TheLightCome** ("we"), uses and why. The game is intended for players aged 13 and over.
 
 ## 1. Information the game uses on your device
 
@@ -53,4 +55,4 @@ If this policy changes, we will update this page and the date at the top.
 
 ## 9. Contact
 
-[PUBLISHER NAME] — [SUPPORT EMAIL]
+TheLightCome — nurikserikbay1995@gmail.com
