@@ -55,7 +55,7 @@ public sealed partial class ARDemoController
     private const float RaceFinishGrace = 15f;
 
     // Driving feel: the car accelerates, brakes and only turns while rolling, like an RC car.
-    private const float MaxSpeed = 0.48f;
+    private const float MaxSpeed = 0.60f;
     private const float ReverseInput = -0.65f;
     private const float Acceleration = 0.9f;
     private const float Braking = 2.2f;

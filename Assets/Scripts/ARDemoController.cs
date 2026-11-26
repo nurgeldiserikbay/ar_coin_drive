@@ -20,7 +20,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private enum GameState { Placing, Ready, Countdown, Racing, Finished }
     // Values are sent over the network: keep Race = 0 and Battle = 1.
     private enum GameMode { Race, Battle, Free }
-    private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage, Tracks, Locations }
+    private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage, Tracks, Locations, Modes }
 
     private static readonly List<ARRaycastHit> RaycastHits = new List<ARRaycastHit>();
     private const float FreeARHalfExtent = ARDepthObstacleDetector.HalfExtent - 0.15f;
@@ -647,8 +647,7 @@ public sealed partial class ARDemoController : MonoBehaviour
 
         if (_view == ViewMode.Phone && _phoneView != null)
         {
-            // The player walks with the car from room to room.
-            _phoneView.FollowRoom(_room.RoomAt(_player.Position), car.position);
+            // The player stays where they stand until they tap MOVE (FOLLOW when the car left the room).
             _phoneView.Update(_arCamera.transform, _arCamera, car.position + Vector3.up * 0.04f, dt);
             return;
         }

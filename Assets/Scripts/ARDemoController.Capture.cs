@@ -58,6 +58,9 @@ public sealed partial class ARDemoController
                 yield return Shot(folder, tag, "05-garage");
                 _screen = UiScreen.Tracks;
                 yield return Shot(folder, tag, "06-tracks");
+                _pickForAR = false;
+                _screen = UiScreen.Modes;
+                yield return Shot(folder, tag, "06b-modes");
                 _screen = UiScreen.Locations;
                 yield return Shot(folder, tag, "07-locations");
 

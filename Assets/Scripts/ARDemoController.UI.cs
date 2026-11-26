@@ -55,6 +55,7 @@ public sealed partial class ARDemoController
             case UiScreen.Garage: GarageScreen(); break;
             case UiScreen.Tracks: TracksScreen(); break;
             case UiScreen.Locations: LocationsScreen(); break;
+            case UiScreen.Modes: ModesScreen(); break;
             case UiScreen.Pause: PauseScreen(); break;
         }
 
@@ -137,10 +138,10 @@ public sealed partial class ARDemoController
         var arLabel = !_arChecked ? "CHECKING AR..." : _arSupported ? "DRIVE IN YOUR ROOM" : "AR NOT SUPPORTED";
         if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), arLabel, _arSupported ? UiKit.Look.Primary : UiKit.Look.Ghost, false, 17, UiIcon.Play)
             && _arSupported)
-            BeginAR();
+            OpenGamePicker(true);
         y += rowHeight + gap;
         if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "PLAY WITHOUT AR", UiKit.Look.Accent, false, 17, UiIcon.Home))
-            _screen = UiScreen.Locations;
+            OpenGamePicker(false);
         y += rowHeight + gap;
         if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "MULTIPLAYER", UiKit.Look.Normal, false, 17, UiIcon.People))
         {
@@ -666,62 +667,158 @@ public sealed partial class ARDemoController
         else EnterVirtualMode();
     }
 
-    // ------------------------------------------------------------------ locations
+    // ------------------------------------------------------------------ game type and location pickers
+
+    /// <summary>True when the game-type picker leads to AR (scan the real floor), false for a virtual location.</summary>
+    private bool _pickForAR;
+
+    private static readonly GameMode[] PickerModes = { GameMode.Free, GameMode.Race, GameMode.Battle };
+    private static readonly string[] ModeTitles = { "FREE DRIVE", "RACE", "BATTLE" };
+    private static readonly string[] ModeBlurbs =
+    {
+        "Drive anywhere at your own pace, collect coins and build obstacle courses.",
+        "Five laps of a toy track against CPU rivals. Beat your best time.",
+        "Ram rivals out of a shrinking ring. First to three knockouts wins."
+    };
+    private static readonly UiIcon[] ModeIcons = { UiIcon.Coin, UiIcon.Flag, UiIcon.Trophy };
+    private static readonly Color[] ModeTints =
+    {
+        new Color(0.13f, 0.52f, 0.46f), new Color(0.90f, 0.42f, 0.08f), new Color(0.68f, 0.17f, 0.30f)
+    };
+
+    private const string LastModeKey = "ARCoinDrive.LastMode";
+
+    /// <summary>Play from the menu: first the game type, then (without AR) the location.</summary>
+    private void OpenGamePicker(bool ar)
+    {
+        _pickForAR = ar;
+        _mode = (GameMode)Mathf.Clamp(PlayerPrefs.GetInt(LastModeKey, (int)GameMode.Free), 0, 2);
+        _screen = UiScreen.Modes;
+    }
+
+    /// <summary>Step 1: what to play. Tapping a card goes straight on.</summary>
+    private void ModesScreen()
+    {
+        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
+        var area = SafeRect();
+        PickerHeader(area, "CHOOSE A GAME", _pickForAR ? "In your room (AR)" : "Step 1 of 2", UiScreen.Menu);
+        for (var i = 0; i < PickerModes.Length; i++)
+        {
+            var card = PickerCard(area, i, PickerModes.Length);
+            if (!ChoiceCard(card, ModeTints[i], ModeIcons[i], ModeTitles[i], ModeBlurbs[i], _mode == PickerModes[i] ? "LAST PLAYED" : null))
+                continue;
+            _mode = PickerModes[i];
+            PlayerPrefs.SetInt(LastModeKey, (int)_mode);
+            PlayerPrefs.Save();
+            if (_pickForAR) BeginAR();
+            else _screen = UiScreen.Locations;
+        }
+    }
 
     private static readonly Color[] LocationTints =
     {
-        new Color(0.62f, 0.46f, 0.30f), new Color(0.20f, 0.55f, 0.25f), new Color(0.30f, 0.36f, 0.46f)
+        new Color(0.62f, 0.42f, 0.24f), new Color(0.20f, 0.55f, 0.25f), new Color(0.30f, 0.38f, 0.52f)
     };
 
     private static readonly UiIcon[] LocationIcons = { UiIcon.Home, UiIcon.Flag, UiIcon.Car };
 
-    /// <summary>Pick where to drive without AR: house, backyard or workshop.</summary>
+    /// <summary>Step 2 (without AR): where to drive. Tapping a card starts the game there.</summary>
     private void LocationsScreen()
     {
         _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
         var area = SafeRect();
-        _ui.TextFit(new Rect(area.x, area.y, area.width - U(120f), U(32f)), "CHOOSE A LOCATION", 22, TextAnchor.MiddleLeft, Color.white, true);
-        if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "BACK", UiKit.Look.Ghost, false, 14, UiIcon.Back))
-            _screen = UiScreen.Menu;
-
+        var modeIndex = Mathf.Max(0, System.Array.IndexOf(PickerModes, _mode));
+        PickerHeader(area, "CHOOSE A LOCATION", "Step 2 of 2  •  " + ModeTitles[modeIndex], UiScreen.Modes);
         var count = VirtualHouse.LocationNames.Length;
-        var top = area.y + U(48f);
-        var bottom = area.yMax - U(64f);
-        var gap = U(12f);
         for (var i = 0; i < count; i++)
         {
-            Rect card;
-            if (Landscape)
-            {
-                var width = (area.width - gap * (count - 1)) / count;
-                card = new Rect(area.x + i * (width + gap), top, width, bottom - top);
-            }
-            else
-            {
-                var height = Mathf.Min(U(150f), (bottom - top - gap * (count - 1)) / count);
-                card = new Rect(area.x, top + i * (height + gap), area.width, height);
-            }
-
-            var selected = (int)GameSettings.Location == i;
-            if (_ui.Button(card, null, UiKit.Look.Ghost, selected)) GameSettings.Location = (GameLocation)i;
-            // Tinted header band with the icon, then name and description.
-            var band = new Rect(card.x + U(6f), card.y + U(6f), card.width - U(12f), Mathf.Min(card.height * 0.45f, U(110f)));
-            _ui.Fill(band, LocationTints[i]);
-            var iconSize = Mathf.Min(band.height * 0.6f, U(56f));
-            _ui.Icon(new Rect(band.center.x - iconSize * 0.5f, band.center.y - iconSize * 0.5f, iconSize, iconSize), LocationIcons[i], new Color(1f, 1f, 1f, 0.9f));
-            var textTop = band.yMax + U(6f);
-            _ui.Text(new Rect(card.x + U(12f), textTop, card.width - U(24f), U(26f)), VirtualHouse.LocationNames[i], 17, TextAnchor.MiddleLeft,
-                selected ? UiKit.AccentColor : Color.white, true);
-            _ui.Text(new Rect(card.x + U(12f), textTop + U(26f), card.width - U(24f), card.yMax - textTop - U(30f)), VirtualHouse.LocationBlurbs[i], 12,
-                TextAnchor.UpperLeft, UiKit.TextDim);
-        }
-
-        var playWidth = Mathf.Min(U(320f), area.width);
-        if (_ui.Button(new Rect(area.center.x - playWidth * 0.5f, area.yMax - U(52f), playWidth, U(52f)), "DRIVE", UiKit.Look.Primary, false, 18, UiIcon.Play))
-        {
+            var card = PickerCard(area, i, count);
+            var last = (int)GameSettings.Location == i ? "LAST PLAYED" : null;
+            if (!ChoiceCard(card, LocationTints[i], LocationIcons[i], VirtualHouse.LocationNames[i].ToUpperInvariant(), VirtualHouse.LocationBlurbs[i], last))
+                continue;
+            GameSettings.Location = (GameLocation)i;
             GameSettings.Save();
             EnterVirtualMode();
         }
+    }
+
+    /// <summary>Title, a small step line under it, and BACK.</summary>
+    private void PickerHeader(Rect area, string title, string step, UiScreen back)
+    {
+        _ui.TextFit(new Rect(area.x, area.y, area.width - U(120f), U(32f)), title, 22, TextAnchor.MiddleLeft, Color.white, true);
+        _ui.TextFit(new Rect(area.x, area.y + U(30f), area.width - U(120f), U(18f)), step, 12, TextAnchor.MiddleLeft, UiKit.AccentColor, true);
+        if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "BACK", UiKit.Look.Ghost, false, 14, UiIcon.Back))
+            _screen = back;
+    }
+
+    /// <summary>Card slot: a column of wide cards in portrait, a row of tall cards in landscape.</summary>
+    private Rect PickerCard(Rect area, int index, int count)
+    {
+        var top = area.y + U(60f);
+        var gap = U(12f);
+        if (Landscape)
+        {
+            var width = (area.width - gap * (count - 1)) / count;
+            return new Rect(area.x + index * (width + gap), top, width, area.yMax - top);
+        }
+
+        var height = Mathf.Min(U(150f), (area.yMax - top - gap * (count - 1)) / count);
+        var maxWidth = Mathf.Min(area.width, U(560f));
+        return new Rect(area.center.x - maxWidth * 0.5f, top + index * (height + gap), maxWidth, height);
+    }
+
+    /// <summary>
+    /// Big tappable card for the pickers: a tinted tile with the icon, the title, a short description
+    /// and a play arrow. Wide cards put the tile on the left, tall cards on top.
+    /// </summary>
+    private bool ChoiceCard(Rect card, Color tint, UiIcon icon, string title, string blurb, string badge)
+    {
+        var tapped = _ui.Button(card, null, UiKit.Look.Normal, false);
+        var pad = U(10f);
+        Rect tile;
+        Rect text;
+        var wide = card.width > card.height * 1.5f;
+        if (wide)
+        {
+            var side = card.height - pad * 2f;
+            tile = new Rect(card.x + pad, card.y + pad, Mathf.Min(side * 1.15f, card.width * 0.34f), side);
+            text = new Rect(tile.xMax + U(14f), card.y + pad, card.xMax - tile.xMax - U(14f) - U(52f), card.height - pad * 2f);
+        }
+        else
+        {
+            tile = new Rect(card.x + pad, card.y + pad, card.width - pad * 2f, Mathf.Min(card.height * 0.48f, U(170f)));
+            text = new Rect(card.x + U(16f), tile.yMax + U(10f), card.width - U(32f), card.yMax - tile.yMax - U(20f) - U(44f));
+        }
+
+        // Tile: colour, a lighter top half for depth, the icon in the middle.
+        _ui.RoundedFill(tile, tint);
+        _ui.RoundedFill(new Rect(tile.x, tile.y, tile.width, tile.height * 0.5f), new Color(1f, 1f, 1f, 0.10f));
+        var iconSize = Mathf.Min(tile.height * 0.5f, tile.width * 0.5f, U(64f));
+        _ui.Icon(new Rect(tile.center.x - iconSize * 0.5f, tile.center.y - iconSize * 0.5f, iconSize, iconSize), icon, Color.white);
+
+        // Text block, vertically centred on wide cards.
+        var blurbHeight = _ui.TextHeight(blurb, 12, text.width);
+        var blockHeight = (badge != null ? U(18f) : 0f) + U(28f) + blurbHeight;
+        var y = wide ? text.y + Mathf.Max(0f, (text.height - blockHeight) * 0.5f) : text.y;
+        if (badge != null)
+        {
+            _ui.TextFit(new Rect(text.x, y, text.width, U(16f)), badge, 10, TextAnchor.MiddleLeft, UiKit.AccentColor, true);
+            y += U(18f);
+        }
+
+        _ui.TextFit(new Rect(text.x, y, text.width, U(26f)), title, 18, TextAnchor.MiddleLeft, Color.white, true);
+        y += U(28f);
+        _ui.Text(new Rect(text.x, y, text.width, blurbHeight), blurb, 12, TextAnchor.UpperLeft, UiKit.TextDim);
+
+        // Play arrow: right edge on wide cards, bottom right on tall ones.
+        var arrow = U(36f);
+        var arrowRect = wide
+            ? new Rect(card.xMax - pad - arrow, card.center.y - arrow * 0.5f, arrow, arrow)
+            : new Rect(card.xMax - U(16f) - arrow, card.yMax - U(14f) - arrow, arrow, arrow);
+        _ui.RoundedFill(arrowRect, UiKit.AccentColor);
+        var glyph = arrow * 0.5f;
+        _ui.Icon(new Rect(arrowRect.center.x - glyph * 0.4f, arrowRect.center.y - glyph * 0.5f, glyph, glyph), UiIcon.Play, Color.white);
+        return tapped;
     }
 
     private Rect CenterPanel(Rect area, float maxWidth, float height)
@@ -1193,10 +1290,15 @@ public sealed partial class ARDemoController
             y += height + U(6f);
             if (_view == ViewMode.Phone)
             {
-                if (_ui.Button(new Rect(x, y, width, height), "MOVE", UiKit.Look.Normal, false, 12, UiIcon.Pin) && _phoneView != null)
+                // The car drove into another room: offer to follow it there.
+                var carRoom = _room != null && _player != null ? _room.RoomAt(_player.Position) : -1;
+                var carElsewhere = _phoneView != null && carRoom >= 0 && carRoom != _phoneView.Room;
+                if (_ui.Button(new Rect(x, y, width, height), carElsewhere ? "FOLLOW" : "MOVE", carElsewhere ? UiKit.Look.Primary : UiKit.Look.Normal, false, 12, UiIcon.Pin)
+                    && _phoneView != null)
                 {
-                    _phoneView.NextSpot();
-                    ShowToast("Standing at " + _phoneView.SpotName);
+                    var walked = carRoom >= 0 && _phoneView.WalkTowards(carRoom, _player.Root.position);
+                    if (!walked && carRoom < 0) _phoneView.NextSpot();
+                    ShowToast(walked ? "Walked to the car" : "Other side of the room");
                 }
 
                 y += height + U(6f);

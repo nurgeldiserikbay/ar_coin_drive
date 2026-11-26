@@ -315,6 +315,13 @@ public sealed class UiKit
         DrawRounded(rect, color ?? PanelColor);
     }
 
+    /// <summary>A rounded filled shape that, unlike Panel, does not swallow taps (decoration on buttons).</summary>
+    public void RoundedFill(Rect rect, Color color)
+    {
+        if (!Drawing) return;
+        DrawRounded(rect, color);
+    }
+
     public void Icon(Rect rect, UiIcon icon, Color color)
     {
         if (!Drawing || icon == UiIcon.None) return;

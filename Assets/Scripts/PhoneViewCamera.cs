@@ -51,6 +51,22 @@ public sealed class PhoneViewCamera
         }
     }
 
+    /// <summary>
+    /// The MOVE button: walk to the room the car is in, or to the other spot when already there.
+    /// The player is never moved automatically, so the view only changes when they ask for it.
+    /// </summary>
+    public bool WalkTowards(int carRoom, Vector3 car)
+    {
+        if (Room != carRoom)
+        {
+            FollowRoom(carRoom, car);
+            return true;
+        }
+
+        NextSpot();
+        return false;
+    }
+
     /// <summary>Walk to the room the car is in (the nearer of its spots), if not there already.</summary>
     public void FollowRoom(int room, Vector3 car)
     {
