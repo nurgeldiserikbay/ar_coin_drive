@@ -235,6 +235,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private void OnGUI()
     {
         if (Event.current.type != EventType.Repaint) return;
+        if (CaptureHideUi) return;
         _ui.BeginDraw();
         RunUi();
     }
@@ -642,6 +643,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     private void LateUpdate()
     {
         if (!_virtualMode || _arCamera == null || _player == null || _player.Root == null) return;
+        if (CaptureCameraLocked) return;
         var car = _player.Root;
         var dt = Time.unscaledDeltaTime;
 

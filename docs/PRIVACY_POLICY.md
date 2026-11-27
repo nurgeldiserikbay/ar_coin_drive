@@ -4,7 +4,7 @@ _Published copy: Google Doc https://docs.google.com/document/d/1ROFQmTNnysuV_sqm
 
 _Last updated: 26 November 2026_
 
-This policy explains what information the Android game **AR Coin Drive** ("the game", package `com.arcoindrive.game`), published by **TheLightCome** ("we"), uses and why. The game is intended for players aged 13 and over.
+This policy explains what information the Android game **AR Coin Drive** ("the game", package `com.thelightcome.arcoindrive`), published by **TheLightCome** ("we"), uses and why. The game is intended for players aged 13 and over.
 
 ## 1. Information the game uses on your device
 

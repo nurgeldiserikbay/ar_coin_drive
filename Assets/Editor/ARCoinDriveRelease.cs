@@ -9,30 +9,41 @@ using UnityEngine;
 /// <summary>
 /// Google Play release build: a signed Android App Bundle (.aab).
 /// The upload key lives OUTSIDE the repository (never commit it). Its location and passwords are
-/// read from a properties file, by default ../keys/release.properties next to the project folder,
-/// or from the path in the ACD_RELEASE_PROPERTIES environment variable. Expected keys:
+/// read from a properties file, by default the shared TheLightCome key at
+/// D:/WORK/Passwords/thelightcome/release.properties, or from the path in the
+/// ACD_RELEASE_PROPERTIES environment variable. Expected keys:
 ///   keystore=C:/path/upload.keystore   storePassword=...   alias=upload   keyPassword=...
-/// Run from the menu (AR Coin Drive > Build Google Play Bundle) or in batch mode with
-/// -executeMethod ARCoinDriveRelease.BuildBundle.
+/// Run from the AR Coin Drive menu or in batch mode with -executeMethod
+/// ARCoinDriveRelease.BuildTestingBundle (closed testing) / ARCoinDriveRelease.BuildBundle (production).
 /// </summary>
 public static class ARCoinDriveRelease
 {
-    public const string PackageName = "com.arcoindrive.game";
+    public const string PackageName = "com.thelightcome.arcoindrive";
+    public const string CompanyName = "TheLightCome";
 
     // Raise VersionCode for EVERY upload to Google Play (Play rejects a code it has seen).
     // Set here, not in Player Settings, because the Android build profile keeps its own copy.
     public const string VersionName = "1.0";
-    public const int VersionCode = 3;
+    public const int VersionCode = 4;
 
-    [MenuItem("AR Coin Drive/Build Google Play Bundle")]
-    public static void BuildBundle()
+    /// <summary>Closed testing: signed .aab that shows only Google's test ads.</summary>
+    [MenuItem("AR Coin Drive/Build Signed AAB - Testing (test ads)")]
+    public static void BuildTestingBundle() => BuildSignedBundle(true);
+
+    /// <summary>Production: signed .aab with the live AdMob units. Only after closed testing.</summary>
+    [MenuItem("AR Coin Drive/Build Signed AAB - Production (real ads)")]
+    public static void BuildBundle() => BuildSignedBundle(false);
+
+    private static void BuildSignedBundle(bool testAds)
     {
+        var ok = false;
         try
         {
             var settings = ReadProperties();
+            AdMobSetup.ForceTestIds = testAds;
             ARCoinDriveSceneBuilder.CreateDemoScene();
 
-            PlayerSettings.companyName = "ARCoinDrive";
+            PlayerSettings.companyName = CompanyName;
             PlayerSettings.productName = "AR Coin Drive";
             PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, PackageName);
             PlayerSettings.bundleVersion = VersionName;
@@ -46,15 +57,19 @@ public static class ARCoinDriveRelease
             PlayerSettings.Android.keyaliasName = settings["alias"];
             PlayerSettings.Android.keyaliasPass = settings["keyPassword"];
             EditorUserBuildSettings.buildAppBundle = true;
+            // Native crash symbols for Play Console (it warns about a bundle without them).
+            EditorUserBuildSettings.androidCreateSymbols = AndroidCreateSymbols.Public;
 
             Directory.CreateDirectory("build");
-            var path = "build/ARCoinDrive-" + PlayerSettings.bundleVersion + "-" + PlayerSettings.Android.bundleVersionCode + ".aab";
+            var path = "build/ARCoinDrive-" + PlayerSettings.bundleVersion + "-" + PlayerSettings.Android.bundleVersionCode
+                       + (testAds ? "-testing" : "") + ".aab";
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
                 scenes = new[] { "Assets/Scenes/ARCoinDriveDemo.unity" },
                 locationPathName = path,
                 target = BuildTarget.Android,
                 targetGroup = BuildTargetGroup.Android,
+                extraScriptingDefines = testAds ? new[] { "ACD_TEST_ADS" } : null,
                 options = BuildOptions.None
             });
 
@@ -65,14 +80,19 @@ public static class ARCoinDriveRelease
 
             Debug.Log("RELEASE_BUILD " + report.summary.result + " errors=" + report.summary.totalErrors + " path=" + path
                       + " version=" + PlayerSettings.bundleVersion + " (" + PlayerSettings.Android.bundleVersionCode + ")"
-                      + " targetSdk=" + PlayerSettings.Android.targetSdkVersion + " minSdk=" + PlayerSettings.Android.minSdkVersion);
-            if (Application.isBatchMode) EditorApplication.Exit(report.summary.result == BuildResult.Succeeded ? 0 : 1);
+                      + " targetSdk=" + PlayerSettings.Android.targetSdkVersion + " minSdk=" + PlayerSettings.Android.minSdkVersion
+                      + " testAds=" + testAds);
+            ok = report.summary.result == BuildResult.Succeeded;
         }
         catch (Exception e)
         {
             Debug.LogError("RELEASE_BUILD_FAILED " + e.Message);
-            if (Application.isBatchMode) EditorApplication.Exit(1);
         }
+
+        // Put the real app ID back into the plugin settings (before Exit, which skips finally).
+        AdMobSetup.ForceTestIds = false;
+        AdMobSetup.Apply();
+        if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
     }
 
     /// <summary>
@@ -86,7 +106,7 @@ public static class ARCoinDriveRelease
         try
         {
             ARCoinDriveSceneBuilder.CreateDemoScene();
-            PlayerSettings.companyName = "ARCoinDrive";
+            PlayerSettings.companyName = CompanyName;
             PlayerSettings.productName = "AR Coin Drive";
             PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, PackageName);
             PlayerSettings.bundleVersion = VersionName;
@@ -158,7 +178,8 @@ public static class ARCoinDriveRelease
     private static Dictionary<string, string> ReadProperties()
     {
         var path = Environment.GetEnvironmentVariable("ACD_RELEASE_PROPERTIES");
-        if (string.IsNullOrEmpty(path)) path = Path.GetFullPath(Path.Combine(Application.dataPath, "../../keys/release.properties"));
+        // The shared TheLightCome upload key, used by all the developer's games.
+        if (string.IsNullOrEmpty(path)) path = "D:/WORK/Passwords/thelightcome/release.properties";
         if (!File.Exists(path)) throw new FileNotFoundException("Release signing properties not found: " + path);
         var values = new Dictionary<string, string>();
         foreach (var line in File.ReadAllLines(path))

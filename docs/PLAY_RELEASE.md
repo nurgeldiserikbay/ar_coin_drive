@@ -1,7 +1,8 @@
 # Google Play release checklist — AR Coin Drive
 
-Package: `com.arcoindrive.game` · Build: `AR Coin Drive > Build Google Play Bundle` (or batch mode `-executeMethod ARCoinDriveRelease.BuildBundle`) → `build/ARCoinDrive-<version>-<code>.aab`.
-Upload key: `../keys/upload.keystore` + `../keys/release.properties` (outside the repo; back it up, never commit). Use Play App Signing.
+Package: `com.thelightcome.arcoindrive` (TheLightCome). Step-by-step Play Console answers in Russian: `docs/PLAY_CONSOLE_STEPS.md`.
+Builds: `AR Coin Drive > Build Signed AAB - Testing (test ads)` (`-executeMethod ARCoinDriveRelease.BuildTestingBundle`, closed testing) and `... - Production (real ads)` (`ARCoinDriveRelease.BuildBundle`) → `build/ARCoinDrive-<version>-<code>[-testing].aab` plus a native `symbols.zip`.
+Upload key: the shared TheLightCome key `D:/WORK/Passwords/thelightcome/release.properties` (outside the repo; back it up, never commit). Use Play App Signing.
 
 ## Before the release build
 

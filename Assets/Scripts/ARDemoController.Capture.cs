@@ -1,4 +1,4 @@
-#if UI_CAPTURE
+﻿#if UI_CAPTURE
 using System.Collections;
 using System.IO;
 using UnityEngine;
@@ -20,8 +20,21 @@ public sealed partial class ARDemoController
 
     public static bool CaptureForceAdOffer;
 
+    // Store-art hooks: the player's car drives itself, the UI can be hidden, the camera held still.
+    public static bool CaptureAutopilot;
+    public static bool CaptureHideUi;
+    public static bool CaptureCameraLocked;
+    private bool _captureKeepHint;
+
     private IEnumerator CaptureAllScreens()
     {
+        if (System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-storeart") >= 0)
+        {
+            yield return StoreArtShots();
+            Application.Quit();
+            yield break;
+        }
+
         var folder = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "shots"));
         Directory.CreateDirectory(folder);
         yield return new WaitForSecondsRealtime(2f);
@@ -153,6 +166,181 @@ public sealed partial class ARDemoController
         Time.timeScale = 1f;
     }
 
+    /// <summary>
+    /// Google Play listing shots (run the capture build with -storeart): full-screen 1920x1080
+    /// landscape, UI sized like a 1080p phone, real races driven by the computer.
+    /// Saved to storeart/ next to the exe; tools/StoreArtCompose.ps1 adds the captions.
+    /// </summary>
+    private IEnumerator StoreArtShots()
+    {
+        var folder = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "storeart"));
+        Directory.CreateDirectory(folder);
+        Screen.SetResolution(1920, 1080, FullScreenMode.FullScreenWindow);
+        for (var i = 0; i < 120 && (Screen.width != 1920 || Screen.height != 1080); i++) yield return null;
+        UiKit.ForcedScale = Screen.width / 732f;
+        Debug.Log("STOREART size " + Screen.width + "x" + Screen.height);
+        yield return new WaitForSecondsRealtime(2f);
+
+        GameSettings.Track = TrackLayout.Stadium;
+        GameSettings.TrackSize = TrackSize.L;
+        GameSettings.Bots = 3;
+        GameSettings.Location = GameLocation.House;
+
+        // A desktop has no AR; the menu should look as it does on an ARCore phone.
+        _arChecked = true;
+        _arSupported = true;
+        _screen = UiScreen.Menu;
+        yield return Shot(folder, "art", "menu");
+        OpenGarage(UiScreen.Menu);
+        yield return Shot(folder, "art", "garage");
+
+        EnterVirtualMode();
+        yield return new WaitForSecondsRealtime(3f);
+        _screen = UiScreen.Game;
+        if (_mode != GameMode.Race) ChangeMode(GameMode.Race);
+        else StartRound();
+
+        // House, from where the player stands.
+        _view = ViewMode.Phone;
+        yield return DriveFor(6f);
+        yield return Shot(folder, "art", "race-phone");
+        _view = ViewMode.Chase;
+        _snapChaseCamera = true;
+        yield return DriveFor(2.5f);
+        yield return Shot(folder, "art", "race-chase");
+
+        yield return StuntArt(folder);
+
+        // Backyard: behind the car, the track picker and a battle; then the workshop.
+        GameSettings.Location = GameLocation.Backyard;
+        GameSettings.Track = TrackLayout.Twister;
+        EnterVirtualMode();
+        yield return new WaitForSecondsRealtime(2f);
+        ApplyTrackChoice();
+        StartRound();
+        _view = ViewMode.Chase;
+        _snapChaseCamera = true;
+        yield return DriveFor(5f);
+        yield return Shot(folder, "art", "backyard-chase");
+        CaptureHideUi = true;
+        yield return Shot(folder, "art", "backyard-clean");
+        CaptureHideUi = false;
+        _screen = UiScreen.Tracks;
+        yield return Shot(folder, "art", "tracks");
+        _screen = UiScreen.Game;
+
+        ChangeMode(GameMode.Battle);
+        _view = ViewMode.Chase;
+        _snapChaseCamera = true;
+        yield return DriveFor(1.2f);
+        yield return Shot(folder, "art", "battle-chase");
+        _view = ViewMode.Phone;
+        yield return Shot(folder, "art", "battle-phone");
+
+        ChangeMode(GameMode.Race);
+        GameSettings.Location = GameLocation.Workshop;
+        GameSettings.Track = TrackLayout.Serpent;
+        EnterVirtualMode();
+        yield return new WaitForSecondsRealtime(2f);
+        ApplyTrackChoice();
+        StartRound();
+        _view = ViewMode.Phone;
+        yield return DriveFor(5f);
+        yield return Shot(folder, "art", "workshop-phone");
+
+        CaptureAutopilot = false;
+        Debug.Log("STOREART_DONE " + folder);
+    }
+
+    /// <summary>Starts the round at once (no countdown) and lets every car race for a while.</summary>
+    private IEnumerator DriveFor(float seconds)
+    {
+        CaptureAutopilot = true;
+        if (_state == GameState.Ready || _state == GameState.Countdown)
+        {
+            _state = GameState.Countdown;
+            _countdown = 0.01f;
+        }
+
+        yield return new WaitForSecondsRealtime(seconds);
+        SetMessage(null);
+        _hint = null;
+    }
+
+    /// <summary>The loop and a jump seen from the roadside, frozen mid-stunt, with and without UI.</summary>
+    private IEnumerator StuntArt(string folder)
+    {
+        TrackStunt loop = null;
+        TrackStunt ramp = null;
+        foreach (var stunt in RaceTrack.Shared.Stunts)
+        {
+            if (stunt.Kind == StuntKind.Loop && loop == null) loop = stunt;
+            if (stunt.Kind == StuntKind.Ramp && ramp == null) ramp = stunt;
+        }
+
+        Time.timeScale = 0f;
+        if (loop != null)
+        {
+            _player.Loop = loop;
+            _player.LoopAngle = 2.7f;
+            _player.LoopEntrySpeed = 0.6f;
+            _player.LoopLane = RaceTrack.Shared.LoopEntryLane;
+            _player.Heading = loop.Heading;
+            PlaceOnLoop(_player);
+            ApplyTransform(_player);
+            var center = new Vector3(loop.Point.x, RaceTrack.LoopRadius, loop.Point.y);
+            var side = new Vector3(loop.Outward.x, 0f, loop.Outward.y);
+            var along = new Vector3(loop.Tangent.x, 0f, loop.Tangent.y);
+            LockCamera(center + side * 0.62f - along * 0.30f + Vector3.up * 0.04f, center + along * 0.03f);
+            yield return Shot(folder, "art", "loop");
+            CaptureHideUi = true;
+            yield return Shot(folder, "art", "loop-clean");
+            CaptureHideUi = false;
+            _player.Loop = null;
+        }
+
+        if (ramp != null)
+        {
+            _player.Position = ramp.Point + ramp.Tangent * 0.2f;
+            _player.Heading = ramp.Heading;
+            _player.Airborne = true;
+            _player.VSpeed = 0.25f;
+            _player.Height = 0.12f;
+            _player.Spin = 140f;
+            ApplyTransform(_player);
+            var car = new Vector3(_player.Position.x, _player.Height, _player.Position.y);
+            var side = new Vector3(ramp.Outward.x, 0f, ramp.Outward.y);
+            var along = new Vector3(ramp.Tangent.x, 0f, ramp.Tangent.y);
+            LockCamera(car + side * 0.48f + along * 0.10f - Vector3.up * 0.06f, car - along * 0.10f);
+            ShowHint("AIR!  Steer to spin");
+            _captureKeepHint = true;
+            yield return Shot(folder, "art", "jump");
+            _captureKeepHint = false;
+            CaptureHideUi = true;
+            yield return Shot(folder, "art", "jump-clean");
+            CaptureHideUi = false;
+        }
+
+        _player.Airborne = false;
+        _player.VSpeed = 0f;
+        _player.Height = 0f;
+        _player.Pitch = 0f;
+        _player.Spin = 0f;
+        CaptureCameraLocked = false;
+        _snapChaseCamera = true;
+        Time.timeScale = 1f;
+    }
+
+    /// <summary>Holds the camera at a point in play-area coordinates, looking at another.</summary>
+    private void LockCamera(Vector3 localPosition, Vector3 localTarget)
+    {
+        CaptureCameraLocked = true;
+        var position = _arena.TransformPoint(localPosition);
+        var target = _arena.TransformPoint(localTarget);
+        _arCamera.fieldOfView = 55f;
+        _arCamera.transform.SetPositionAndRotation(position, Quaternion.LookRotation(target - position, _arena.up));
+    }
+
     private void ClosePauseIfOpen()
     {
         if (_screen == UiScreen.Pause) ClosePause();
@@ -162,10 +350,19 @@ public sealed partial class ARDemoController
     {
         // Let the screen's fade/slide-in finish and the garage turntable render.
         yield return new WaitForSecondsRealtime(0.9f);
+        if (!_captureKeepHint) _hint = null;
         yield return new WaitForEndOfFrame();
         ScreenCapture.CaptureScreenshot(Path.Combine(folder, tag + "-" + name + ".png"));
         yield return null;
         yield return null;
     }
+}
+#else
+public sealed partial class ARDemoController
+{
+    // Phone builds: the store-art hooks are always off.
+    private static readonly bool CaptureAutopilot = false;
+    private static readonly bool CaptureHideUi = false;
+    private static readonly bool CaptureCameraLocked = false;
 }
 #endif

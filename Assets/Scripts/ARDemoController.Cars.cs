@@ -377,6 +377,10 @@ public sealed partial class ARDemoController
                 car.Drive = 0f;
                 car.Steer = 0f;
             }
+            else if (car.IsLocal && CaptureAutopilot)
+            {
+                BotInput(car, out car.Drive, out car.Steer);
+            }
             else if (car.IsLocal)
             {
                 car.Drive = _buildMode || _screen != UiScreen.Game ? 0f : _driveInput;
