@@ -15,6 +15,10 @@ using UnityEngine.XR.ARSubsystems;
 /// A cell needs votes from two frames before it blocks, which filters single noisy readings.
 /// The map persists while the phone looks elsewhere, so obstacles stay solid when out of view.
 /// Depth is geometric only (no object recognition) and depends on the device.
+///
+/// Phones without the Depth API still get a map from ARCore's feature points (the same points AR
+/// tracking uses): sparser, and only on textured surfaces, but available on every ARCore phone.
+/// Each point at car height marks its cell and the cells around it; points on the floor clear them.
 /// </summary>
 public sealed class ARDepthObstacleDetector : MonoBehaviour
 {
@@ -27,6 +31,8 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
     private const float MaximumDepth = 3.6f;
     private const float ObstacleMinHeight = 0.035f;
     private const float ObstacleMaxHeight = 0.35f;
+    // Feature points are noisier than depth: a textured rug must not turn into obstacles.
+    private const float PointMinHeight = 0.05f;
     private const float FloorBand = 0.015f;
     private const float CliffDepth = -0.08f;
     private const float SolidThreshold = 2f;
@@ -34,6 +40,7 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
     private const byte MinimumConfidence = 90;
 
     private AROcclusionManager _occlusionManager;
+    private ARPointCloudManager _pointClouds;
     private ARCameraManager _cameraManager;
     private Camera _camera;
     private Transform _arena;
@@ -56,6 +63,10 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
 
     public bool DepthSupported { get; private set; }
     public bool HasDepthFrame { get; private set; }
+    /// <summary>Feature points are feeding the map (works without the Depth API).</summary>
+    public bool HasPointFrame { get; private set; }
+    /// <summary>Some source is mapping obstacles: depth or feature points.</summary>
+    public bool Mapping => DepthSupported || HasPointFrame;
     public int SolidCellCount => _solidCount;
 
     public bool ShowOverlay
@@ -90,12 +101,13 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
     private void Update()
     {
         RefreshDepthSupport();
-        if (_arena == null || !DepthSupported) return;
+        if (_arena == null) return;
 
         if (Time.unscaledTime >= _nextSampleTime)
         {
             _nextSampleTime = Time.unscaledTime + SampleInterval;
-            SampleEnvironmentDepth();
+            if (DepthSupported) SampleEnvironmentDepth();
+            SamplePointClouds();
         }
 
         if (_overlayDirty && _showOverlay) RebuildOverlay();
@@ -280,16 +292,26 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
             }
         }
 
+        Commit(2, 3, 1.5f);
+        HasDepthFrame = true;
+    }
+
+    /// <summary>
+    /// Turns this sample's votes into evidence: enough obstacle votes raise a cell, enough floor votes
+    /// (and none for an obstacle) lower it. A cell blocks once its evidence reaches SolidThreshold.
+    /// </summary>
+    private void Commit(int minHits, int minFloor, float clearRate)
+    {
         var changed = false;
         for (var i = 0; i < _touched.Count; i++)
         {
             var index = _touched[i];
             var before = _evidence[index];
             var after = before;
-            if (_frameHits[index] >= 2)
+            if (_frameHits[index] >= minHits)
                 after = Mathf.Min(MaxEvidence, before + 1f);
-            else if (_frameFloor[index] >= 3 && _frameHits[index] == 0)
-                after = Mathf.Max(0f, before - 1.5f);
+            else if (_frameFloor[index] >= minFloor && _frameHits[index] == 0)
+                after = Mathf.Max(0f, before - clearRate);
 
             if (!Mathf.Approximately(before, after))
             {
@@ -308,8 +330,62 @@ public sealed class ARDepthObstacleDetector : MonoBehaviour
             _frameFloor[index] = 0;
         }
 
-        HasDepthFrame = true;
+        _touched.Clear();
         if (changed) _overlayDirty = true;
+    }
+
+    /// <summary>
+    /// Feature points: each point at car height votes for its cell and the four around it (points are
+    /// sparse), points on the floor vote to clear. One vote is enough, since every point is already
+    /// tracked by ARCore over several frames.
+    /// </summary>
+    private void SamplePointClouds()
+    {
+        if (_pointClouds == null) _pointClouds = FindAnyObjectByType<ARPointCloudManager>();
+        if (_pointClouds == null || !_pointClouds.enabled) { HasPointFrame = false; return; }
+
+        var arenaFromWorld = _arena.worldToLocalMatrix;
+        _touched.Clear();
+        var any = false;
+        foreach (var cloud in _pointClouds.trackables)
+        {
+            if (!cloud.positions.HasValue) continue;
+            var positions = cloud.positions.Value;
+            // Positions are in session space: relative to the XR Origin's trackables parent.
+            var space = cloud.transform.parent != null ? cloud.transform.parent.localToWorldMatrix : Matrix4x4.identity;
+            var toArena = arenaFromWorld * space;
+            for (var i = 0; i < positions.Length; i++)
+            {
+                var point = toArena.MultiplyPoint3x4(positions[i]);
+                var height = point.y;
+                if (height >= PointMinHeight && height <= ObstacleMaxHeight)
+                {
+                    var cx = Mathf.FloorToInt((point.x + HalfExtent) / CellSize);
+                    var cz = Mathf.FloorToInt((point.z + HalfExtent) / CellSize);
+                    VoteCell(_frameHits, cx, cz);
+                    VoteCell(_frameHits, cx + 1, cz);
+                    VoteCell(_frameHits, cx - 1, cz);
+                    VoteCell(_frameHits, cx, cz + 1);
+                    VoteCell(_frameHits, cx, cz - 1);
+                    any = true;
+                }
+                else if (Mathf.Abs(height) <= FloorBand * 1.5f)
+                {
+                    var index = CellIndex(point.x, point.z);
+                    if (index >= 0) Vote(_frameFloor, index);
+                    any = true;
+                }
+            }
+        }
+
+        Commit(1, 2, 0.75f);
+        if (any) HasPointFrame = true;
+    }
+
+    private void VoteCell(ushort[] counts, int cx, int cz)
+    {
+        if (cx < 0 || cz < 0 || cx >= Cells || cz >= Cells) return;
+        Vote(counts, cz * Cells + cx);
     }
 
     private void Vote(ushort[] counts, int index)

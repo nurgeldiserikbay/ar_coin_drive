@@ -477,6 +477,14 @@ public sealed partial class ARDemoController
 
     // ------------------------------------------------------------------ tracks and arenas
 
+    /// <summary>"S 2.0 m" etc.: the floor square each track size needs.</summary>
+    private static readonly string[] SizeLabels =
+    {
+        "S " + (RaceTrack.SizeHalfExtent[0] * 2f).ToString("0.0") + " m",
+        "M " + (RaceTrack.SizeHalfExtent[1] * 2f).ToString("0.0") + " m",
+        "L " + (RaceTrack.SizeHalfExtent[2] * 2f).ToString("0.0") + " m"
+    };
+
     private void TracksScreen()
     {
         _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 0.96f));
@@ -512,24 +520,30 @@ public sealed partial class ARDemoController
 
         // Layout list, then size and arena choices underneath.
         var y = list.y;
-        var row = Mathf.Min(U(42f), (list.height - U(150f)) / RaceTrack.LayoutNames.Length - U(6f));
-        for (var i = 0; i < RaceTrack.LayoutNames.Length; i++)
+        // Layouts in two columns.
+        var layouts = RaceTrack.LayoutNames.Length;
+        var rows = (layouts + 1) / 2;
+        var row = Mathf.Min(U(42f), (list.height - U(150f)) / rows - U(6f));
+        var column = (list.width - U(6f)) * 0.5f;
+        for (var i = 0; i < layouts; i++)
         {
             var preview = RaceTrack.Get((TrackLayout)i, GameSettings.TrackSize);
-            var label = RaceTrack.LayoutNames[i] + "   " + Mathf.RoundToInt(preview.Length) + " m lap";
-            if (_ui.Button(new Rect(list.x, y, list.width, row), label, UiKit.Look.Normal, (int)GameSettings.Track == i, 14))
+            var label = RaceTrack.LayoutNames[i] + "  " + Mathf.RoundToInt(preview.Length) + " m";
+            var cell = new Rect(list.x + (i % 2) * (column + U(6f)), y + (i / 2) * (row + U(6f)), column, row);
+            if (_ui.Button(cell, label, UiKit.Look.Normal, (int)GameSettings.Track == i, 14))
                 GameSettings.Track = (TrackLayout)i;
-            y += row + U(6f);
         }
+
+        y += rows * (row + U(6f));
 
         y += U(6f);
         _ui.Text(new Rect(list.x, y, U(90f), U(36f)), "Track size", 13, TextAnchor.MiddleLeft, Color.white);
         GameSettings.TrackSize = (TrackSize)_ui.Segmented(new Rect(list.x + U(96f), y, list.width - U(96f), U(36f)),
-            new[] { "S 1.5 m", "M 2.4 m", "L 3.2 m" }, (int)GameSettings.TrackSize, 12);
+            SizeLabels, (int)GameSettings.TrackSize, 12);
         y += U(42f);
         if (GameSettings.TrackSize < RaceTrack.MinSize(GameSettings.Track))
         {
-            _ui.Text(new Rect(list.x, y - U(6f), list.width, U(16f)), RaceTrack.LayoutNames[(int)GameSettings.Track] + " needs at least size M: M will be used.", 11, TextAnchor.MiddleLeft, UiKit.AccentColor);
+            _ui.Text(new Rect(list.x, y - U(6f), list.width, U(16f)), RaceTrack.LayoutNames[(int)GameSettings.Track] + " needs at least size " + RaceTrack.MinSize(GameSettings.Track) + ": that size will be used.", 11, TextAnchor.MiddleLeft, UiKit.AccentColor);
             y += U(14f);
         }
         _ui.Text(new Rect(list.x, y, U(90f), U(36f)), "Battle", 13, TextAnchor.MiddleLeft, Color.white);
@@ -1104,6 +1118,7 @@ public sealed partial class ARDemoController
             _ui.Text(new Rect(chip.x + U(30f), chip.y, chip.width - U(34f), chip.height), IsHost ? _net.PlayerCount + "/" + LanSession.MaxPlayers : "ON", 14, TextAnchor.MiddleLeft, online, true);
         }
 
+        HealthBars();
         Standings(area, pauseRect);
         BigCenterText();
         Toasts(area);
@@ -1167,7 +1182,7 @@ public sealed partial class ARDemoController
         else if (_mode == GameMode.Battle)
         {
             title = "BATTLE  •  RING " + Mathf.RoundToInt(_battleRadius * 200f) + " CM";
-            sub = "First to " + BattleWinsNeeded + " points  •  you " + (player != null ? player.Wins : 0);
+            sub = "HP " + (player != null ? Mathf.CeilToInt(player.Health) : 0) + "  •  wins " + (player != null ? player.Wins : 0) + "/" + BattleWinsNeeded;
         }
         else
         {
@@ -1198,6 +1213,27 @@ public sealed partial class ARDemoController
             if (StandingsShown) messageWidth = Mathf.Min(messageWidth, area.width - U(150f) - U(12f));
             _ui.Text(new Rect(area.x + U(2f), chip.yMax + U(6f), messageWidth, U(60f)), _message, 13,
                 TextAnchor.UpperLeft, new Color(1f, 1f, 1f, alpha), false, true);
+        }
+    }
+
+    /// <summary>Battle: a small HP bar floating above every car still in the round.</summary>
+    private void HealthBars()
+    {
+        if (_mode != GameMode.Battle || _state == GameState.Finished || _arCamera == null || !_ui.Drawing) return;
+        var width = U(44f);
+        var height = U(6f);
+        foreach (var car in _cars)
+        {
+            if (car.Out || car.Root == null) continue;
+            var screen = _arCamera.WorldToScreenPoint(car.Root.position + car.Root.up * 0.09f);
+            if (screen.z <= 0f) continue;
+            var bar = new Rect(screen.x - width * 0.5f, Screen.height - screen.y - height, width, height);
+            var health = Mathf.Clamp01(car.Health / MaxHealth);
+            _ui.Fill(new Rect(bar.x - U(1f), bar.y - U(1f), bar.width + U(2f), bar.height + U(2f)), new Color(0f, 0f, 0f, 0.6f));
+            var colour = health > 0.5f ? Color.Lerp(new Color(1f, 0.85f, 0.1f), new Color(0.3f, 0.9f, 0.35f), (health - 0.5f) * 2f)
+                : Color.Lerp(new Color(0.95f, 0.2f, 0.15f), new Color(1f, 0.85f, 0.1f), health * 2f);
+            _ui.Fill(new Rect(bar.x, bar.y, bar.width * health, bar.height), colour);
+            if (car.IsLocal) _ui.Fill(new Rect(bar.x, bar.yMax + U(2f), bar.width, U(2f)), UiKit.AccentColor);
         }
     }
 
@@ -1306,7 +1342,7 @@ public sealed partial class ARDemoController
             }
         }
 
-        if (!_virtualMode && _depthDetector != null && _depthDetector.DepthSupported && !_buildMode)
+        if (!_virtualMode && _depthDetector != null && _depthDetector.Mapping && !_buildMode)
         {
             if (_ui.Button(new Rect(x, y, width, height), _depthDetector.ShowOverlay ? "SCAN ON" : "SCAN OFF", UiKit.Look.Normal, _depthDetector.ShowOverlay, 12, UiIcon.Radar))
                 _depthDetector.ShowOverlay = !_depthDetector.ShowOverlay;
@@ -1459,8 +1495,8 @@ public sealed partial class ARDemoController
     {
         var planeCount = _planeManager != null ? _planeManager.trackables.count : 0;
         var depthState = _depthDetector == null ? "off"
-            : !_depthDetector.DepthSupported ? "not supported"
-            : _depthDetector.HasDepthFrame ? "ready, " + _depthDetector.SolidCellCount + " cells" : "waiting";
+            : _depthDetector.DepthSupported ? (_depthDetector.HasDepthFrame ? "depth, " + _depthDetector.SolidCellCount + " cells" : "waiting")
+            : _depthDetector.HasPointFrame ? "feature points, " + _depthDetector.SolidCellCount + " cells" : "no depth, waiting for points";
         var line = _virtualMode
             ? "Virtual room • " + (_phoneView != null && _phoneView.HasGyro ? "gyroscope" : "no gyroscope") + " • " + Screen.orientation
             : "AR " + ARSession.state + " (" + ARSession.notTrackingReason + ") • frames " + _cameraFrameCount + " • planes " + planeCount

@@ -24,6 +24,9 @@ public static class ARRigSetup
         var origin = Object.FindAnyObjectByType<XROrigin>();
         if (origin != null && origin.GetComponent<ARAnchorManager>() == null)
             origin.gameObject.AddComponent<ARAnchorManager>();
+        // Feature points: the obstacle map's fallback on phones without the ARCore Depth API.
+        if (origin != null && origin.GetComponent<ARPointCloudManager>() == null)
+            origin.gameObject.AddComponent<ARPointCloudManager>();
     }
 
     private static void EnsureTrackedPoseDriver(GameObject cameraObject)

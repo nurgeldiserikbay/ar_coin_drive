@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public enum TrackLayout { Classic, Kidney, Hairpin, Stadium, Twister }
+public enum TrackLayout { Classic, Kidney, Hairpin, Stadium, Twister, Serpent, Delta, Chicane }
 public enum TrackSize { S, M, L }
 
 /// <summary>
@@ -14,12 +14,14 @@ public enum TrackSize { S, M, L }
 public sealed class RaceTrack
 {
     public const float TubeRadius = 0.011f;
-    public static readonly string[] LayoutNames = { "Classic", "Kidney", "Hairpins", "Stadium", "Twister" };
-    public static readonly float[] SizeHalfExtent = { 0.75f, 1.2f, 1.6f };
+    public static readonly string[] LayoutNames = { "Classic", "Kidney", "Hairpins", "Stadium", "Twister", "Serpent", "Delta", "Chicane" };
+    // Floor square per size (half side, metres). L fits the clear middle of the virtual living room.
+    public static readonly float[] SizeHalfExtent = { 1.0f, 1.35f, 1.7f };
     // Wanted road half widths (S, M, L). Tight layouts get the widest road their barriers allow,
     // but never less than MinRoadHalfWidth.
-    private static readonly float[] SizeRoadHalfWidth = { 0.16f, 0.19f, 0.22f };
-    private const float MinRoadHalfWidth = 0.125f;
+    private static readonly float[] SizeRoadHalfWidth = { 0.22f, 0.23f, 0.24f };
+    // 40 cm: four in-game cars still fit side by side.
+    private const float MinRoadHalfWidth = 0.20f;
     // Curb plus astroturf run-off between the road edge and the foam tube.
     private const float RunOffWidth = 0.038f;
     // Bare floor kept between the tubes of two neighbouring parts of the track.
@@ -68,13 +70,25 @@ public sealed class RaceTrack
 
     public static RaceTrack Select(TrackLayout layout, TrackSize size) => _current = Get(layout, size);
 
-    /// <summary>Layouts with many parallel runs need room for their barriers: no S size.</summary>
-    public static TrackSize MinSize(TrackLayout layout) =>
-        layout == TrackLayout.Hairpin || layout == TrackLayout.Twister ? TrackSize.M : TrackSize.S;
+    /// <summary>
+    /// Smallest size at which the layout keeps a road at least MinRoadHalfWidth wide with its barriers
+    /// apart (layouts with many parallel runs need more floor).
+    /// </summary>
+    public static TrackSize MinSize(TrackLayout layout)
+    {
+        for (var size = TrackSize.S; size < TrackSize.L; size++)
+            if (Build(layout, size).BarriersClear) return size;
+        return TrackSize.L;
+    }
 
     public static RaceTrack Get(TrackLayout layout, TrackSize size)
     {
-        if (size < MinSize(layout)) size = MinSize(layout);
+        var smallest = MinSize(layout);
+        return Build(layout, size < smallest ? smallest : size);
+    }
+
+    private static RaceTrack Build(TrackLayout layout, TrackSize size)
+    {
         var key = (int)layout * 10 + (int)size;
         if (!Cache.TryGetValue(key, out var track))
         {
@@ -85,12 +99,18 @@ public sealed class RaceTrack
         return track;
     }
 
+    /// <summary>True when the barriers of neighbouring parts of the track keep MinBarrierGap apart.</summary>
+    public bool BarriersClear { get; }
+
     /// <summary>Centre line points (for the menu's mini map).</summary>
     public IReadOnlyList<Vector2> CenterLine => _center;
 
-    /// <summary>Starting grid behind the line in two columns (inside / outside), rows of two.</summary>
-    public Vector2 GridPosition(int slot) =>
-        _center[0] - _tangent[0] * (0.15f + (slot / 2) * 0.24f) + _outward[0] * ((slot % 2 == 0 ? -1f : 1f) * RoadHalfWidth * 0.46f);
+    /// <summary>Starting grid behind the line: up to four cars side by side across the road.</summary>
+    public Vector2 GridPosition(int slot)
+    {
+        var lane = (RoadHalfWidth * 2f - 0.02f) / 4f;
+        return _center[0] - _tangent[0] * (0.15f + (slot / 4) * 0.24f) + _outward[0] * (((slot % 4) - 1.5f) * lane);
+    }
 
     /// <summary>How far around the lap a position is, from 0 at the start line to 1.</summary>
     public float Progress(Vector2 position) => NearestIndex(position) / (float)SampleCount;
@@ -153,6 +173,8 @@ public sealed class RaceTrack
             roadHalf = Mathf.Max(MinRoadHalfWidth, fits - 0.002f);
         }
 
+        BarriersClear = ClosestApproach() >= 2f * (RailOffset + TubeRadius) + MinBarrierGap;
+
         var extent = SizeHalfExtent[(int)size];
         Bounds = Rect.MinMaxRect(-extent, -extent, extent, extent);
 
@@ -201,6 +223,29 @@ public sealed class RaceTrack
                     new Vector2(-0.88f, -0.88f), new Vector2(-0.2f, -0.72f), new Vector2(0.2f, -0.95f), new Vector2(0.86f, -0.78f),
                     new Vector2(0.58f, -0.28f), new Vector2(0.95f, 0.22f), new Vector2(0.72f, 0.86f), new Vector2(0.12f, 0.58f),
                     new Vector2(-0.32f, 0.92f), new Vector2(-0.86f, 0.70f), new Vector2(-0.52f, 0.12f), new Vector2(-0.95f, -0.32f)
+                };
+            case TrackLayout.Serpent:
+                // A big loop with an S-bend notch cut into each side.
+                return new[]
+                {
+                    new Vector2(-0.90f, -0.88f), new Vector2(0.90f, -0.88f), new Vector2(0.96f, -0.30f), new Vector2(0.38f, 0.0f),
+                    new Vector2(0.96f, 0.30f), new Vector2(0.90f, 0.88f), new Vector2(-0.90f, 0.88f), new Vector2(-0.96f, 0.30f),
+                    new Vector2(-0.38f, 0.0f), new Vector2(-0.96f, -0.30f)
+                };
+            case TrackLayout.Delta:
+                // Rounded triangle: three long straights and three tight corners.
+                return new[]
+                {
+                    new Vector2(-0.92f, -0.86f), new Vector2(0f, -0.90f), new Vector2(0.92f, -0.86f),
+                    new Vector2(0.48f, 0.06f), new Vector2(0.02f, 0.94f), new Vector2(-0.46f, 0.06f)
+                };
+            case TrackLayout.Chicane:
+                // Oval with a chicane in the middle of both straights.
+                return new[]
+                {
+                    new Vector2(-0.90f, -0.66f), new Vector2(-0.28f, -0.66f), new Vector2(0f, -0.36f), new Vector2(0.28f, -0.66f),
+                    new Vector2(0.90f, -0.66f), new Vector2(1.0f, 0f), new Vector2(0.90f, 0.66f), new Vector2(0.28f, 0.66f),
+                    new Vector2(0f, 0.36f), new Vector2(-0.28f, 0.66f), new Vector2(-0.90f, 0.66f), new Vector2(-1.0f, 0f)
                 };
             default:
             {

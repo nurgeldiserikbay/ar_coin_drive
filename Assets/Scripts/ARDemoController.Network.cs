@@ -158,6 +158,7 @@ public sealed partial class ARDemoController
                 writer.Write((byte)car.Wins);
                 writer.Write((byte)car.Place);
                 writer.Write((byte)car.Coins);
+                writer.Write((byte)Mathf.CeilToInt(car.Health));
                 var name = Encoding.UTF8.GetBytes(car.Name ?? "");
                 var length = Mathf.Min(name.Length, 30);
                 writer.Write((byte)length);
@@ -192,6 +193,7 @@ public sealed partial class ARDemoController
             car.Position = Vector2.Lerp(car.Position, car.TargetPosition, follow);
             car.Heading = Mathf.LerpAngle(car.Heading, car.TargetHeading, follow);
             if (car.Fall > 0f && _mode == GameMode.Battle) car.Fall += dt * 0.5f;
+            if (car.Wreck > 0f) car.Wreck += dt;
             ApplyTransform(car);
         }
 
@@ -280,6 +282,7 @@ public sealed partial class ARDemoController
                     var wins = reader.ReadByte();
                     var place = reader.ReadByte();
                     var coins = reader.ReadByte();
+                    var health = reader.ReadByte();
                     var name = Encoding.UTF8.GetString(reader.ReadBytes(reader.ReadByte()));
                     seen.Add(id);
 
@@ -310,6 +313,11 @@ public sealed partial class ARDemoController
                     car.Wins = wins;
                     car.Place = place;
                     car.Coins = coins;
+                    if (car.IsLocal && health < car.Health - 0.5f && health > 0) ShowHint("OUCH!  -" + Mathf.RoundToInt(car.Health - health) + " HP");
+                    car.Health = health;
+                    // Wrecked on the host: start the roll-over here too.
+                    if (health == 0 && car.Out && _mode == GameMode.Battle && car.Wreck <= 0f) car.Wreck = 0.0001f;
+                    if (health > 0) car.Wreck = 0f;
                     if (finishedNow && car.IsLocal) GameAudio.Instance.Play(place == 1 ? GameAudio.Sfx.Win : GameAudio.Sfx.Lap);
                 }
 

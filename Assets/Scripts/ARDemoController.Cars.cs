@@ -28,6 +28,9 @@ public sealed partial class ARDemoController
         public Vector2 Knock;
         public float Fall;
         public bool Out;
+        public float Health = MaxHealth; // battle: 0 = wrecked
+        public float Wreck;                // battle: seconds since the car was wrecked (flip animation)
+        public float HitCooldown;          // battle: no new damage before this time (one crash, one hit)
         public float BoostUntil;
 
         public float Laps;
@@ -69,6 +72,10 @@ public sealed partial class ARDemoController
 
     // Push-out battle: last car in the shrinking ring scores; first to three wins.
     private const int BattleWinsNeeded = 3;
+    // Battle damage: HP lost per m/s of closing speed in a clean nose-into-side hit.
+    private const float MaxHealth = 100f;
+    private const float DamagePerSpeed = 48f;
+    private const float MinImpactSpeed = 0.12f;
     private ArenaShape _arenaShape;
     private int _arenaSize = 1;
     private float BattleStartRadius => BattleArena.SizeRadius[_arenaSize];
@@ -132,7 +139,7 @@ public sealed partial class ARDemoController
         {
             ResetBattleRound();
             _state = GameState.Ready;
-            SetMessage("Battle! Last car in the ring scores. First to " + BattleWinsNeeded + " wins. Hold GO.");
+            SetMessage("Battle! Ram with your nose, side hits hurt most. Wreck rivals or push them out. First to " + BattleWinsNeeded + " wins. Hold GO.");
         }
         else
         {
@@ -534,6 +541,9 @@ public sealed partial class ARDemoController
             car.Lateral = 0f;
             car.Fall = 0f;
             car.Out = false;
+            car.Health = MaxHealth;
+            car.Wreck = 0f;
+            car.HitCooldown = 0f;
             ApplyTransform(car);
         }
     }
@@ -541,7 +551,10 @@ public sealed partial class ARDemoController
     private void UpdateBattle(float dt)
     {
         foreach (var car in _cars)
+        {
             if (car.Fall > 0f) car.Fall += dt;
+            if (car.Wreck > 0f) car.Wreck += dt;
+        }
 
         if (_state != GameState.Racing) return;
 
@@ -641,7 +654,7 @@ public sealed partial class ARDemoController
         // Racing line follower with a personal lane, easing off in corners and rubber-banding
         // against the leading player so races stay close.
         var track = RaceTrack.Shared;
-        var lane = Mathf.Sin(_raceTime * 0.45f + car.Id * 1.7f) * 0.045f;
+        var lane = Mathf.Sin(_raceTime * 0.45f + car.Id * 1.7f) * track.RoadHalfWidth * 0.45f;
         var targetPoint = track.PointAt(track.Progress(car.Position) + 0.055f, lane);
         var toTarget = targetPoint - car.Position;
         steer = Mathf.Clamp(Mathf.DeltaAngle(car.Heading, Mathf.Atan2(toTarget.x, toTarget.y) * Mathf.Rad2Deg) / 20f, -1f, 1f);
@@ -855,12 +868,12 @@ public sealed partial class ARDemoController
         {
             // Ramming transfers momentum, scaled by weight: a heavy car hits harder and moves less.
             if (aAttack + bAttack < 0.02f) return;
+            CrashDamage(a, b, normal, aAttack, bAttack);
             var ratio = a.Spec.Mass / b.Spec.Mass;
             b.Knock += normal * (aAttack * 1.45f * ratio + bAttack * 0.2f);
             a.Knock -= normal * (bAttack * 1.45f / ratio + aAttack * 0.2f);
             a.Speed *= 0.55f;
             b.Speed *= 0.55f;
-            if (aAttack > 0.15f || bAttack > 0.15f) ContactFeedback(a, b, aAttack, bAttack);
             return;
         }
 
@@ -885,10 +898,87 @@ public sealed partial class ARDemoController
         GameAudio.Haptic(40);
     }
 
+    // ------------------------------------------------------------------ battle damage
+
+    /// <summary>
+    /// Battle crash damage, like a demolition derby. Damage grows with the closing speed; the car that
+    /// drove into the other deals most of it. What hits matters (nose full, tail half, a side swipe
+    /// little) and so does what is hit (side hurts most, tail a bit more than normal, nose to nose
+    /// least). Heavier cars hit harder. <paramref name="normal"/> points from a to b.
+    /// </summary>
+    private void CrashDamage(Car a, Car b, Vector2 normal, float aAttack, float bAttack)
+    {
+        var closing = aAttack + bAttack;
+        if (closing < MinImpactSpeed) return;
+        var toB = DamageShare(aAttack, bAttack) * StrikeFactor(a, normal) * ReceiveFactor(b, -normal) * Mathf.Sqrt(a.Spec.Mass / b.Spec.Mass);
+        var toA = DamageShare(bAttack, aAttack) * StrikeFactor(b, -normal) * ReceiveFactor(a, normal) * Mathf.Sqrt(b.Spec.Mass / a.Spec.Mass);
+        var hitB = Hurt(b, closing * DamagePerSpeed * toB);
+        var hitA = Hurt(a, closing * DamagePerSpeed * toA);
+        if (hitA + hitB < 1f) return;
+
+        // Feedback for this phone's player: what they dealt and what they took.
+        if (a.IsLocal || b.IsLocal)
+        {
+            var dealt = a.IsLocal ? hitB : hitA;
+            var taken = a.IsLocal ? hitA : hitB;
+            ShowHint(dealt >= taken ? "SMASH!  -" + Mathf.RoundToInt(dealt) : "OUCH!  -" + Mathf.RoundToInt(taken) + " HP");
+            GameAudio.Haptic(taken > 15f ? 90 : 40);
+        }
+
+        GameAudio.Instance.Play(closing > 0.5f ? GameAudio.Sfx.Crash : GameAudio.Sfx.Bump, Mathf.Clamp01(closing + 0.2f));
+    }
+
+    /// <summary>The car doing the hitting deals most of the damage; the one hit still deals some back.</summary>
+    private static float DamageShare(float mine, float theirs) => 0.25f + 0.75f * mine / Mathf.Max(0.0001f, mine + theirs);
+
+    /// <summary>Which part of the car struck: nose 1, tail 0.5, side 0.2.</summary>
+    private static float StrikeFactor(Car car, Vector2 towardOther)
+    {
+        var facing = Vector2.Dot(CarCollision.Forward(car.Heading), towardOther);
+        return facing > 0.5f ? 1f : facing < -0.5f ? 0.5f : 0.2f;
+    }
+
+    /// <summary>Where the car was struck: side 1.35, tail 1.1, nose 0.7 (the bumper takes it).</summary>
+    private static float ReceiveFactor(Car car, Vector2 towardHitter)
+    {
+        var facing = Vector2.Dot(CarCollision.Forward(car.Heading), towardHitter);
+        return facing > 0.5f ? 0.7f : facing < -0.5f ? 1.1f : 1.35f;
+    }
+
+    /// <summary>Takes HP off a car (once per crash); at 0 the car is wrecked and out of the round.</summary>
+    private float Hurt(Car car, float amount)
+    {
+        if (amount < 1f || car.Out || Time.time < car.HitCooldown) return 0f;
+        amount = Mathf.Min(amount, car.Health);
+        car.Health -= amount;
+        car.HitCooldown = Time.time + 0.3f;
+        if (car.Rig != null) car.Rig.Bump(Mathf.Clamp(amount / 30f, 0.2f, 1f));
+        if (car.Health > 0.5f) return amount;
+
+        car.Health = 0f;
+        car.Out = true;
+        car.Wreck = 0.0001f;
+        car.Speed = 0f;
+        GameAudio.Instance.Play(GameAudio.Sfx.Knockout, car.IsLocal ? 1f : 0.7f);
+        if (car.IsLocal) GameAudio.Haptic(160);
+        ShowHint(car.IsLocal ? "WRECKED!" : car.Name + " is wrecked!");
+        return amount;
+    }
+
     private void ApplyTransform(Car car)
     {
         if (car.Root == null) return;
         var drop = car.Fall * car.Fall * 1.4f;
+        if (car.Wreck > 0f)
+        {
+            // Wrecked: hops and rolls onto its roof in half a second, then lies there as an obstacle.
+            var t = Mathf.Clamp01(car.Wreck * 2f);
+            var lift = 0.05f * CarCatalog.GameScale * t + 0.06f * Mathf.Sin(t * Mathf.PI);
+            car.Root.localPosition = new Vector3(car.Position.x, 0.002f + lift, car.Position.y);
+            car.Root.localRotation = Quaternion.Euler(0f, car.Heading, 0f) * Quaternion.Euler(0f, 0f, 180f * t);
+            return;
+        }
+
         car.Root.localPosition = new Vector3(car.Position.x, 0.002f - drop, car.Position.y);
         car.Root.localRotation = Quaternion.Euler(0f, car.Heading, 0f) * Quaternion.Euler(car.Fall * 70f, 0f, 0f);
     }

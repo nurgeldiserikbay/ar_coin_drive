@@ -139,6 +139,7 @@ public static class ARCoinDriveSceneBuilder
         planes.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
         planes.planePrefab = CreatePlaneVisualizerPrefab();
         originObject.AddComponent<ARRaycastManager>();
+        originObject.AddComponent<ARPointCloudManager>(); // obstacle map without the Depth API
 
         var lightObject = new GameObject("AR Key Light");
         lightObject.transform.rotation = Quaternion.Euler(55f, -35f, 0f);

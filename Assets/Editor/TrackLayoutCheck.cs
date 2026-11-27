@@ -24,7 +24,7 @@ public static class TrackLayoutCheck
                 var gap = track.ClosestApproach();
                 var fits = gap >= needed;
                 ok &= fits;
-                Debug.Log($"TRACK_CHECK {layout} {size}: road {track.RoadHalfWidth * 200f:0} cm, lap {track.Length:0.00} m, "
+                Debug.Log($"TRACK_CHECK {layout} {size} (min {RaceTrack.MinSize(layout)}): road {track.RoadHalfWidth * 200f:0} cm, lap {track.Length:0.00} m, "
                           + $"closest {gap * 100f:0} cm, needs {needed * 100f:0} cm {(fits ? "OK" : "OVERLAP")}");
             }
         }
