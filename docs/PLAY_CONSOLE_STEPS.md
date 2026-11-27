@@ -85,13 +85,15 @@ All apps → Create app:
 
 ### Data safety
 
+Быстрый способ: Data safety → **Import from CSV** → `build/data_safety_arcoindrive.csv`. В нём уже стоят все ответы ниже, останется проверить и нажать Save. Вручную:
+
 - Does your app collect or share user data? **Yes**.
 - All data encrypted in transit? **Yes**.
 - Way to request deletion? **No**: аккаунтов нет, данные игры хранятся на устройстве и удаляются вместе с приложением.
 - Собираемые данные. Для всех ставим: **Collected** и **Shared**, сбор **required** (пользователь не может его отключить). Цели: **Advertising or marketing**, **Analytics**, **Fraud prevention, security and compliance**.
   - **Location → Approximate location** (по IP-адресу, через AdMob)
   - **App activity → App interactions** (AdMob)
-  - **App info and performance → Crash logs, Diagnostics** (AdMob, Unity)
+  - **App info and performance → Diagnostics** (AdMob)
   - **Device or other IDs** (рекламный ID, AdMob)
 - **Financial info → Purchase history**: Collected, не Shared, цель **App functionality** (покупки через Google Play).
 - Камера: изображения обрабатываются только на устройстве и никуда не отправляются, поэтому в Data safety её **не указываем**.
