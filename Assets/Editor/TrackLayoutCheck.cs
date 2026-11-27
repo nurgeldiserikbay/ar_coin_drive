@@ -24,8 +24,10 @@ public static class TrackLayoutCheck
                 var gap = track.ClosestApproach();
                 var fits = gap >= needed;
                 ok &= fits;
+                var stunts = "";
+                foreach (var stunt in track.Stunts) stunts += " " + stunt.Kind + "@" + (stunt.Index / (float)track.CenterLine.Count).ToString("0.00");
                 Debug.Log($"TRACK_CHECK {layout} {size} (min {RaceTrack.MinSize(layout)}): road {track.RoadHalfWidth * 200f:0} cm, lap {track.Length:0.00} m, "
-                          + $"closest {gap * 100f:0} cm, needs {needed * 100f:0} cm {(fits ? "OK" : "OVERLAP")}");
+                          + $"closest {gap * 100f:0} cm, needs {needed * 100f:0} cm {(fits ? "OK" : "OVERLAP")}, stunts:{stunts}");
             }
         }
 

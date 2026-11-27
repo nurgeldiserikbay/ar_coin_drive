@@ -26,6 +26,9 @@ public sealed partial class ARDemoController
         Directory.CreateDirectory(folder);
         yield return new WaitForSecondsRealtime(2f);
 
+        // A track with a loop and two ramps, so the stunt shots have something to show.
+        GameSettings.Track = TrackLayout.Stadium;
+        GameSettings.TrackSize = TrackSize.L;
         var enteredGame = false;
         foreach (var device in CaptureDevices)
         {
@@ -77,6 +80,7 @@ public sealed partial class ARDemoController
                 ChangeMode(GameMode.Race);
                 yield return new WaitForSecondsRealtime(0.5f);
                 yield return Shot(folder, tag, "09-hud-race");
+                yield return StuntShots(folder, tag);
                 ChangeMode(GameMode.Battle);
                 yield return new WaitForSecondsRealtime(0.5f);
                 yield return Shot(folder, tag, "10-hud-battle");
@@ -102,6 +106,51 @@ public sealed partial class ARDemoController
 
         Debug.Log("CAPTURE_DONE " + folder);
         Application.Quit();
+    }
+
+    /// <summary>The player frozen half way round the loop, then in the air over a ramp mid-spin.</summary>
+    private IEnumerator StuntShots(string folder, string tag)
+    {
+        if (_player == null) yield break;
+        TrackStunt loop = null;
+        TrackStunt ramp = null;
+        foreach (var stunt in RaceTrack.Shared.Stunts)
+        {
+            if (stunt.Kind == StuntKind.Loop && loop == null) loop = stunt;
+            if (stunt.Kind == StuntKind.Ramp && ramp == null) ramp = stunt;
+        }
+
+        Time.timeScale = 0f;
+        if (loop != null)
+        {
+            _player.Loop = loop;
+            _player.LoopAngle = 2.3f;
+            _player.LoopEntrySpeed = 0.6f;
+            _player.LoopLane = RaceTrack.Shared.LoopEntryLane;
+            _player.Heading = loop.Heading;
+            PlaceOnLoop(_player);
+            ApplyTransform(_player);
+            _snapChaseCamera = true;
+            yield return Shot(folder, tag, "09b-loop");
+            _player.Loop = null;
+        }
+
+        if (ramp != null)
+        {
+            _player.Position = ramp.Point + ramp.Tangent * 0.22f;
+            _player.Heading = ramp.Heading;
+            _player.Height = 0.11f;
+            _player.Pitch = 8f;
+            _player.Spin = 130f;
+            ApplyTransform(_player);
+            _snapChaseCamera = true;
+            yield return Shot(folder, tag, "09c-jump");
+        }
+
+        _player.Height = 0f;
+        _player.Pitch = 0f;
+        _player.Spin = 0f;
+        Time.timeScale = 1f;
     }
 
     private void ClosePauseIfOpen()

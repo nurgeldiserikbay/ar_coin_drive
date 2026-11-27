@@ -11,7 +11,7 @@ public enum TrackSize { S, M, L }
 /// real floor shows through the middle. It also answers "where is the car on the track?"
 /// in constant time through a precomputed nearest-segment grid.
 /// </summary>
-public sealed class RaceTrack
+public sealed partial class RaceTrack
 {
     public const float TubeRadius = 0.011f;
     public static readonly string[] LayoutNames = { "Classic", "Kidney", "Hairpins", "Stadium", "Twister", "Serpent", "Delta", "Chicane" };
@@ -41,7 +41,9 @@ public sealed class RaceTrack
     private const int Turf = 7;
     private const int Gantry = 8;
     private const int Banner = 9;
-    private const int SubmeshCount = 10;
+    private const int RampPaint = 10;
+    private const int LoopPaint = 11;
+    private const int SubmeshCount = 12;
 
     private static readonly Dictionary<int, RaceTrack> Cache = new Dictionary<int, RaceTrack>();
     private static RaceTrack _current;
@@ -174,6 +176,7 @@ public sealed class RaceTrack
         }
 
         BarriersClear = ClosestApproach() >= 2f * (RailOffset + TubeRadius) + MinBarrierGap;
+        PlaceStunts();
 
         var extent = SizeHalfExtent[(int)size];
         Bounds = Rect.MinMaxRect(-extent, -extent, extent, extent);
@@ -228,9 +231,9 @@ public sealed class RaceTrack
                 // A big loop with an S-bend notch cut into each side.
                 return new[]
                 {
-                    new Vector2(-0.90f, -0.88f), new Vector2(0.90f, -0.88f), new Vector2(0.96f, -0.30f), new Vector2(0.38f, 0.0f),
-                    new Vector2(0.96f, 0.30f), new Vector2(0.90f, 0.88f), new Vector2(-0.90f, 0.88f), new Vector2(-0.96f, 0.30f),
-                    new Vector2(-0.38f, 0.0f), new Vector2(-0.96f, -0.30f)
+                    new Vector2(-0.90f, -0.88f), new Vector2(0.90f, -0.88f), new Vector2(0.96f, -0.40f), new Vector2(0.50f, 0.0f),
+                    new Vector2(0.96f, 0.40f), new Vector2(0.90f, 0.88f), new Vector2(-0.90f, 0.88f), new Vector2(-0.96f, 0.40f),
+                    new Vector2(-0.50f, 0.0f), new Vector2(-0.96f, -0.40f)
                 };
             case TrackLayout.Delta:
                 // Rounded triangle: three long straights and three tight corners.
@@ -297,17 +300,24 @@ public sealed class RaceTrack
         return Vector2.Dot(position - _center[index], _outward[index]);
     }
 
-    /// <summary>Keeps a position between the barriers. Returns true when a barrier was hit.</summary>
+    /// <summary>
+    /// Keeps a position between the barriers (and on the right side of a loop's lane divider).
+    /// Returns true when an outer barrier was hit; the divider only guides, it does not scrape.
+    /// </summary>
     public bool ConstrainToRails(ref Vector2 position, float carHalfWidth)
     {
         var index = NearestIndex(position);
         var lateral = Vector2.Dot(position - _center[index], _outward[index]);
         var limit = RailOffset - TubeRadius - carHalfWidth;
-        if (Mathf.Abs(lateral) <= limit) return false;
+        var low = -limit;
+        var high = limit;
+        LoopLanes(position, index, lateral, carHalfWidth, ref low, ref high);
+        if (lateral >= low && lateral <= high) return false;
 
+        var hitRail = lateral > limit || lateral < -limit;
         position = _center[index] + _tangent[index] * Vector2.Dot(position - _center[index], _tangent[index])
-            + _outward[index] * (Mathf.Sign(lateral) * limit);
-        return true;
+            + _outward[index] * Mathf.Clamp(lateral, low, high);
+        return hitRail;
     }
 
     /// <summary>Grid lookup, then a short local search around the cell's answer.</summary>
@@ -383,7 +393,9 @@ public sealed class RaceTrack
             ProceduralCarFactory.GetMaterial(new Color(0.88f, 0.88f, 0.86f), 0.3f),
             ProceduralCarFactory.GetMaterial(new Color(0.20f, 0.36f, 0.16f), 0.05f, 0f, ProceduralTextures.Fabric, 1f),
             ProceduralCarFactory.GetMaterial(new Color(0.62f, 0.64f, 0.67f), 0.6f, 0.85f),
-            ProceduralCarFactory.GetMaterial(new Color(0.08f, 0.09f, 0.11f), 0.4f)
+            ProceduralCarFactory.GetMaterial(new Color(0.08f, 0.09f, 0.11f), 0.4f),
+            ProceduralCarFactory.GetMaterial(new Color(0.96f, 0.72f, 0.10f), 0.35f),
+            ProceduralCarFactory.GetMaterial(new Color(0.12f, 0.42f, 0.86f), 0.55f)
         };
         return track;
     }
@@ -415,6 +427,7 @@ public sealed class RaceTrack
 
         AddStartLine(builder);
         AddGantry(builder);
+        AddStunts(builder);
         _mesh = builder.Build("Race Track " + Layout + " " + Size);
         return _mesh;
     }

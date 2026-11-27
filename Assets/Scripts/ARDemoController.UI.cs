@@ -566,6 +566,27 @@ public sealed partial class ARDemoController
             _ui.Fill(new Rect(origin.x + p.x - dot * 0.5f, origin.y - p.y - dot * 0.5f, dot, dot), i == 0 ? Color.white : UiKit.AccentColor);
         }
 
+        // Stunts: yellow ramps, blue loops, and a count above the floor size.
+        var ramps = 0;
+        var loops = 0;
+        var marker = U(12f);
+        foreach (var stunt in chosen.Stunts)
+        {
+            var isLoop = stunt.Kind == StuntKind.Loop;
+            if (isLoop) loops++;
+            else ramps++;
+            var p = stunt.Point / extent * box * 0.5f;
+            _ui.RoundedFill(new Rect(origin.x + p.x - marker * 0.5f, origin.y - p.y - marker * 0.5f, marker, marker),
+                isLoop ? new Color(0.25f, 0.55f, 1f) : new Color(1f, 0.80f, 0.15f));
+        }
+
+        if (ramps + loops > 0)
+        {
+            var parts = (loops > 0 ? loops + (loops == 1 ? " loop" : " loops") : "") + (loops > 0 && ramps > 0 ? "  •  " : "")
+                        + (ramps > 0 ? ramps + (ramps == 1 ? " jump ramp" : " jump ramps") : "");
+            _ui.TextFit(new Rect(map.x + U(8f), map.yMax - U(46f), map.width - U(16f), U(20f)), parts, 12, TextAnchor.MiddleCenter, Color.white);
+        }
+
         _ui.Text(new Rect(map.x, map.yMax - U(26f), map.width, U(22f)),
             "Needs about " + (extent * 2f).ToString("0.0") + " x " + (extent * 2f).ToString("0.0") + " m of floor", 12, TextAnchor.MiddleCenter, UiKit.TextDim);
     }

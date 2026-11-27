@@ -153,6 +153,9 @@ public sealed partial class ARDemoController
                 writer.Write(car.Speed);
                 writer.Write(car.Steer);
                 writer.Write(car.Fall);
+                writer.Write(car.Height);
+                writer.Write(car.Pitch);
+                writer.Write(car.Spin);
                 writer.Write(car.Laps);
                 writer.Write(car.FinishTime);
                 writer.Write((byte)car.Wins);
@@ -277,6 +280,9 @@ public sealed partial class ARDemoController
                     var speed = reader.ReadSingle();
                     var steer = reader.ReadSingle();
                     var fall = reader.ReadSingle();
+                    var height = reader.ReadSingle();
+                    var pitch = reader.ReadSingle();
+                    var spin = reader.ReadSingle();
                     var laps = reader.ReadSingle();
                     var finishTime = reader.ReadSingle();
                     var wins = reader.ReadByte();
@@ -300,6 +306,9 @@ public sealed partial class ARDemoController
                     car.TargetHeading = heading;
                     car.Speed = speed;
                     car.Steer = steer;
+                    car.Height = height;
+                    car.Pitch = pitch;
+                    car.Spin = spin;
                     if (car.IsLocal && car.Coins < coins) GameAudio.Instance.Play(GameAudio.Sfx.Coin);
                     if (car.IsLocal && (flags & 4) != 0 && Time.time >= car.BoostUntil) ShowHint("BOOST!");
                     car.BoostUntil = (flags & 4) != 0 ? Time.time + 0.1f : 0f;

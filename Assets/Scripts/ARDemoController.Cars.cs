@@ -33,6 +33,18 @@ public sealed partial class ARDemoController
         public float HitCooldown;          // battle: no new damage before this time (one crash, one hit)
         public float BoostUntil;
 
+        // Race stunts (see ARDemoController.Stunts).
+        public float Height;              // above the floor: on a ramp, in the air or in a loop
+        public float Pitch;               // nose-up degrees (ramp slope, flight, angle round a loop)
+        public float Spin;                // trick spin in the air, degrees on top of Heading
+        public bool Airborne;
+        public float VSpeed;
+        public float AirTime;
+        public TrackStunt Loop;           // the loop the car is riding, or null
+        public float LoopAngle;
+        public float LoopEntrySpeed;
+        public float LoopLane;
+
         public float Laps;
         public float LastProgress;
         public bool Finished;
@@ -153,7 +165,7 @@ public sealed partial class ARDemoController
 
             CreateRaceCoins();
             _state = GameState.Ready;
-            SetMessage(LapCount + " laps. Hold GO to start the countdown.");
+            SetMessage(LapCount + " laps. Jump the ramps and steer in the air to spin, land straight for coins. Hold GO.");
         }
 
         foreach (var car in _cars) ApplyTransform(car);
@@ -306,6 +318,8 @@ public sealed partial class ARDemoController
         for (var i = 0; i < CoinCount; i++)
         {
             var lapFraction = (i + 0.5f) / CoinCount;
+            // Not on a ramp or in a loop: slide the coin on past the stunt.
+            for (var k = 0; k < 20 && RaceTrack.Shared.InStuntZone(lapFraction); k++) lapFraction += 0.01f;
             _coinLayout.Add(RaceTrack.Shared.PointAt(lapFraction, Mathf.Sin(i * 2.3f + 0.7f) * 0.07f));
         }
 
@@ -655,6 +669,7 @@ public sealed partial class ARDemoController
         // against the leading player so races stay close.
         var track = RaceTrack.Shared;
         var lane = Mathf.Sin(_raceTime * 0.45f + car.Id * 1.7f) * track.RoadHalfWidth * 0.45f;
+        if (track.LoopLaneFor(car.Position, out var loopLane)) lane = loopLane;
         var targetPoint = track.PointAt(track.Progress(car.Position) + 0.055f, lane);
         var toTarget = targetPoint - car.Position;
         steer = Mathf.Clamp(Mathf.DeltaAngle(car.Heading, Mathf.Atan2(toTarget.x, toTarget.y) * Mathf.Rad2Deg) / 20f, -1f, 1f);
@@ -678,6 +693,8 @@ public sealed partial class ARDemoController
             return;
         }
 
+        if (_mode == GameMode.Race && StuntStep(car, dt)) return;
+
         var start = car.Position;
         var startHeading = car.Heading;
         var position = start;
@@ -693,6 +710,7 @@ public sealed partial class ARDemoController
 
         car.Position = position;
         car.Heading = heading;
+        if (_mode == GameMode.Race) StuntsAfterStep(car, start);
     }
 
     private void ResolveWorldCollision(Car car, Vector2 start, float startHeading, ref Vector2 position, ref float heading, float dt)
@@ -846,7 +864,7 @@ public sealed partial class ARDemoController
 
     private void ResolveContact(Car a, Car b)
     {
-        if (a.Fall > 0f || b.Fall > 0f) return;
+        if (a.Fall > 0f || b.Fall > 0f || ApartInHeight(a, b)) return;
         var delta = b.Position - a.Position;
         var distance = delta.magnitude;
         var contact = ContactRadius(a) + ContactRadius(b);
@@ -979,8 +997,8 @@ public sealed partial class ARDemoController
             return;
         }
 
-        car.Root.localPosition = new Vector3(car.Position.x, 0.002f - drop, car.Position.y);
-        car.Root.localRotation = Quaternion.Euler(0f, car.Heading, 0f) * Quaternion.Euler(car.Fall * 70f, 0f, 0f);
+        car.Root.localPosition = new Vector3(car.Position.x, 0.002f - drop + car.Height, car.Position.y);
+        car.Root.localRotation = Quaternion.Euler(0f, car.Heading + car.Spin, 0f) * Quaternion.Euler(car.Fall * 70f - car.Pitch, 0f, 0f);
     }
 
     // ------------------------------------------------------------------ garage rewards
