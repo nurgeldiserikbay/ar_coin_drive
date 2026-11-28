@@ -161,7 +161,7 @@ public sealed partial class ARDemoController
         {
             ResetBattleRound();
             _state = GameState.Ready;
-            SetMessage("Battle! Ram with your nose, side hits hurt most. Wreck rivals or push them out. First to " + BattleWinsNeeded + " wins. Hold GO.");
+            SetMessage("Battle! Ram with your nose, side hits hurt most. Wreck rivals or push them out. First to " + BattleWinsNeeded + " wins. " + GoHint + ".");
         }
         else
         {
@@ -175,7 +175,7 @@ public sealed partial class ARDemoController
 
             CreateRaceCoins();
             _state = GameState.Ready;
-            SetMessage(LapCount + " laps. Jump the ramps and steer in the air to spin, land straight for coins. Hold GO.");
+            SetMessage(LapCount + " laps. Jump the ramps and steer in the air to spin, land straight for coins. " + GoHint + ".");
         }
 
         foreach (var car in _cars) ApplyTransform(car);
@@ -351,7 +351,7 @@ public sealed partial class ARDemoController
     /// <summary>One frame of the game on this phone (host or single player).</summary>
     private void SimulateGame(float dt)
     {
-        if (_state == GameState.Ready && _player != null && _driveInput > 0.01f && !_buildMode)
+        if (_state == GameState.Ready && _player != null && (_driveInput > 0.01f || _stickInput.sqrMagnitude > 0.09f) && !_buildMode)
         {
             _state = GameState.Countdown;
             _countdown = CountdownSeconds;

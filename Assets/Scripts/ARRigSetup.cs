@@ -56,8 +56,11 @@ public static class ARRigSetup
             driver.enabled = enabled;
     }
 
+    private static Material _planeEdgeMaterial;
+
     /// <summary>
-    /// Adds a translucent mesh to planes when the plane manager has no prefab.
+    /// Adds a visual to planes when the plane manager has no prefab: a faint fill with a dot
+    /// every 10 cm (plane UVs are in metres) and a bright edge, the usual "found floor" look.
     /// Uses Sprites/Default, which is always included in builds and supports alpha.
     /// </summary>
     public static void EnsurePlaneVisuals(ARPlaneManager planeManager)
@@ -76,8 +79,28 @@ public static class ARRigSetup
             meshRenderer.sharedMaterial = GetPlaneMaterial();
             meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             meshRenderer.receiveShadows = false;
+
+            var edge = plane.GetComponent<LineRenderer>();
+            if (edge == null) edge = plane.gameObject.AddComponent<LineRenderer>();
+            edge.useWorldSpace = false;
+            edge.loop = true;
+            edge.widthMultiplier = 0.006f;
+            edge.numCornerVertices = 2;
+            edge.sharedMaterial = GetEdgeMaterial();
+            edge.startColor = edge.endColor = new Color(1f, 1f, 1f, 0.75f);
+            edge.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            edge.receiveShadows = false;
             plane.gameObject.AddComponent<ARPlaneMeshVisualizer>();
         }
+    }
+
+    private static Material GetEdgeMaterial()
+    {
+        if (_planeEdgeMaterial != null) return _planeEdgeMaterial;
+        var shader = Shader.Find("Sprites/Default");
+        if (shader == null) return null;
+        _planeEdgeMaterial = new Material(shader) { name = "AR Plane Edge (runtime)" };
+        return _planeEdgeMaterial;
     }
 
     private static Material GetPlaneMaterial()
@@ -87,9 +110,38 @@ public static class ARRigSetup
         if (shader == null) return null;
         _planeMaterial = new Material(shader)
         {
-            name = "AR Plane Tint (runtime)",
-            color = new Color(0.10f, 0.82f, 0.70f, 0.22f)
+            name = "AR Plane Dots (runtime)",
+            mainTexture = DotTexture(),
+            color = new Color(1f, 1f, 1f, 1f)
         };
         return _planeMaterial;
+    }
+
+    /// <summary>One metre of floor: a light teal wash with a white dot every 10 cm.</summary>
+    private static Texture2D DotTexture()
+    {
+        const int size = 160;
+        const int spacing = 16;
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, true)
+        {
+            name = "AR Plane Dots",
+            wrapMode = TextureWrapMode.Repeat,
+            filterMode = FilterMode.Trilinear,
+            anisoLevel = 4
+        };
+        var pixels = new Color32[size * size];
+        for (var y = 0; y < size; y++)
+        for (var x = 0; x < size; x++)
+        {
+            var dx = (x % spacing) - spacing * 0.5f + 0.5f;
+            var dy = (y % spacing) - spacing * 0.5f + 0.5f;
+            var dot = Mathf.Clamp01(2.6f - Mathf.Sqrt(dx * dx + dy * dy));
+            var color = Color.Lerp(new Color(0.10f, 0.82f, 0.70f, 0.10f), new Color(1f, 1f, 1f, 0.85f), dot);
+            pixels[y * size + x] = color;
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(true, true);
+        return texture;
     }
 }

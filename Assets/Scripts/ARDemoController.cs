@@ -22,7 +22,6 @@ public sealed partial class ARDemoController : MonoBehaviour
     private enum GameMode { Race, Battle, Free }
     private enum UiScreen { Menu, Lobby, Settings, Game, Pause, Garage, Tracks, Locations, Modes }
 
-    private static readonly List<ARRaycastHit> RaycastHits = new List<ARRaycastHit>();
     private const float FreeARHalfExtent = ARDepthObstacleDetector.HalfExtent - 0.15f;
     private const float ARStartTimeout = 12f;
     private const float RcScale = 18f;
@@ -220,10 +219,14 @@ public sealed partial class ARDemoController : MonoBehaviour
 
         UpdateNetwork();
         _leftHeld = _rightHeld = _goHeld = _backHeld = false;
+        _stickInput = Vector2.zero;
         HandleBackButton();
         RunUi();
         HandleFreeTouches();
         ReadDriveInput();
+        UpdateReticle();
+        if (_arena != null && !_virtualMode && _screen == UiScreen.Game && ARSession.state == ARSessionState.SessionInitializing)
+            ShowHint("AR lost track. Point the phone at the play area.");
 
         if (_arena != null)
         {
@@ -301,6 +304,55 @@ public sealed partial class ARDemoController : MonoBehaviour
 #endif
         _steerInput = steer;
         _driveInput = _goHeld == _backHeld ? 0f : _goHeld ? 1f : ReverseInput;
+        if (GameSettings.Steering == SteeringSetting.Stick && _stickInput != Vector2.zero) StickToDrive(_stickInput, out _driveInput, out _steerInput);
+    }
+
+    private bool _stickReversing;
+
+    /// <summary>
+    /// Camera-relative driving: the stick points where the car should go as seen on screen.
+    /// The car steers towards that direction; when it points behind the stopped car it backs
+    /// up instead (like pulling back on an RC remote), which also frees a car stuck at a wall.
+    /// </summary>
+    private static string GoHint => GameSettings.Steering == SteeringSetting.Stick ? "Push the stick" : "Hold GO";
+
+    private void StickToDrive(Vector2 stick, out float drive, out float steer)
+    {
+        drive = steer = 0f;
+        var amount = Mathf.Clamp01((stick.magnitude - 0.18f) / 0.72f);
+        if (amount <= 0f || _player == null || _arena == null || _arCamera == null)
+        {
+            _stickReversing = false;
+            return;
+        }
+
+        var up = _arena.up;
+        var view = _arCamera.transform;
+        // Looking straight down, the top of the screen is "forward".
+        var forward = Vector3.ProjectOnPlane(view.forward, up);
+        if (forward.sqrMagnitude < 0.04f) forward = Vector3.ProjectOnPlane(view.up, up);
+        forward.Normalize();
+        var right = Vector3.Cross(up, forward);
+        var local = _arena.InverseTransformDirection(right * stick.x + forward * stick.y);
+        var wanted = Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg;
+        var error = Mathf.DeltaAngle(_player.Heading, wanted);
+        var behind = Mathf.Abs(error);
+
+        if (_stickReversing) _stickReversing = behind > 100f;
+        else _stickReversing = behind > 145f && _player.Speed < 0.08f;
+
+        if (_stickReversing)
+        {
+            // Swing the tail towards the stick: in reverse the steering works the other way.
+            var tailError = Mathf.DeltaAngle(_player.Heading + 180f, wanted);
+            steer = Mathf.Clamp(-tailError / 28f, -1f, 1f);
+            drive = ReverseInput * amount;
+            return;
+        }
+
+        steer = Mathf.Clamp(error / 28f, -1f, 1f);
+        // Ease off in sharp turns so the car tightens its line instead of running wide.
+        drive = amount * Mathf.Lerp(1f, 0.55f, Mathf.InverseLerp(35f, 120f, behind));
     }
 
     // ------------------------------------------------------------------ messages
@@ -470,8 +522,7 @@ public sealed partial class ARDemoController : MonoBehaviour
 
         if (_cameraFrameCount == 0 && Time.unscaledTime - _scanStartTime > ARStartTimeout)
             return "The AR camera is not starting. Check the camera permission, or play in the virtual room.";
-        var planes = _planeManager != null ? _planeManager.trackables.count : 0;
-        return planes == 0 ? "Move your phone slowly over the floor..." : "Tap the highlighted floor to place your play area.";
+        return ScanAdvice();
     }
 
     private void TryPlaceArena(Vector2 screenPosition)
@@ -482,41 +533,24 @@ public sealed partial class ARDemoController : MonoBehaviour
             return;
         }
 
-        if (!_raycastManager.Raycast(screenPosition, RaycastHits, TrackableType.PlaneWithinPolygon))
+        // A tap on a found floor places it there; any other tap (or PLACE) uses the ring.
+        Pose hitPose;
+        ARPlane floorPlane;
+        if (screenPosition.x < 0f || !FindFloor(screenPosition, out hitPose, out floorPlane))
         {
-            ShowToast("No floor found there yet. Scan a textured, well-lit floor and tap it.");
-            return;
-        }
-
-        var floorHitIndex = -1;
-        for (var i = 0; i < RaycastHits.Count; i++)
-        {
-            var hitPlane = RaycastHits[i].trackable as ARPlane;
-            if (hitPlane != null && hitPlane.alignment == PlaneAlignment.HorizontalUp)
+            if (!_reticleValid)
             {
-                floorHitIndex = i;
-                break;
+                ShowToast("No floor found yet. Point at the floor and sweep the phone slowly left and right.");
+                return;
             }
+
+            hitPose = _reticlePose;
+            floorPlane = _reticlePlane;
         }
 
-        if (floorHitIndex < 0)
-        {
-            ShowToast("Tap a horizontal surface, such as the floor or a table.");
-            return;
-        }
-
-        var floorPlane = RaycastHits[floorHitIndex].trackable as ARPlane;
-        var hitPose = RaycastHits[floorHitIndex].pose;
-        // Turn the play area to face the player (a plane's own yaw is arbitrary), so the start
-        // straight runs across the view instead of at a random angle.
-        var rotation = hitPose.rotation;
-        if (_arCamera != null)
-        {
-            var look = Vector3.ProjectOnPlane(_arCamera.transform.forward, hitPose.up);
-            if (look.sqrMagnitude > 0.0001f) rotation = Quaternion.LookRotation(look.normalized, hitPose.up);
-        }
-
-        var arenaPose = new Pose(hitPose.position + hitPose.up * 0.008f, rotation);
+        // FindFloor turns the play area to face the player (a plane's own yaw is arbitrary),
+        // so the start straight runs across the view instead of at a random angle.
+        var arenaPose = new Pose(hitPose.position + hitPose.up * 0.008f, hitPose.rotation);
 
         _anchor = null;
         var anchorDescriptor = _anchorManager != null ? _anchorManager.descriptor : null;
@@ -541,23 +575,6 @@ public sealed partial class ARDemoController : MonoBehaviour
         GameAudio.Instance.Play(GameAudio.Sfx.Place);
         StartRound();
         if (_anchor == null) ShowToast("Placed without an AR anchor. Avoid walking far from this spot.");
-        else WarnIfFloorTooSmall(floorPlane);
-    }
-
-    /// <summary>
-    /// Compares the scanned floor with what the chosen track or ring needs. ARCore planes keep
-    /// growing while you scan, so this is advice, not a refusal.
-    /// </summary>
-    private void WarnIfFloorTooSmall(ARPlane floor)
-    {
-        if (floor == null || _mode == GameMode.Free) return;
-        var needed = _mode == GameMode.Battle
-            ? BattleStartRadius * 2f + 0.1f
-            : RaceTrack.Shared.Bounds.width;
-        var have = Mathf.Min(floor.size.x, floor.size.y);
-        if (have >= needed * 0.8f) return;
-        ShowToast("This " + (_mode == GameMode.Battle ? "ring" : "track") + " needs about " + needed.ToString("0.0") + " x "
-                  + needed.ToString("0.0") + " m of floor; " + have.ToString("0.0") + " m scanned. Pick a smaller size if it hits furniture.");
     }
 
     /// <summary>Invisible floor that lets virtual shadows fall on the real floor.</summary>
@@ -708,8 +725,10 @@ public sealed partial class ARDemoController : MonoBehaviour
         foreach (var plane in _planeManager.trackables)
         {
             if (plane == null) continue;
-            if (plane.TryGetComponent<MeshRenderer>(out var meshRenderer)) meshRenderer.forceRenderingOff = hidden;
-            if (plane.TryGetComponent<LineRenderer>(out var lineRenderer)) lineRenderer.forceRenderingOff = hidden;
+            // Only floors are shown: wall planes still feed obstacle detection but would clutter the view.
+            var off = hidden || plane.alignment != PlaneAlignment.HorizontalUp;
+            if (plane.TryGetComponent<MeshRenderer>(out var meshRenderer)) meshRenderer.forceRenderingOff = off;
+            if (plane.TryGetComponent<LineRenderer>(out var lineRenderer)) lineRenderer.forceRenderingOff = off;
         }
     }
 

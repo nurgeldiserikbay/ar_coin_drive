@@ -1,7 +1,8 @@
 using UnityEngine;
 
 public enum OrientationSetting { Landscape, Portrait, Auto }
-public enum SteeringSetting { Buttons, Tilt }
+/// <summary>Stick: drag a thumb stick and the car drives the way it points on screen (camera relative).</summary>
+public enum SteeringSetting { Buttons, Tilt, Stick }
 
 /// <summary>Player preferences, saved with PlayerPrefs.</summary>
 public static class GameSettings
@@ -31,7 +32,8 @@ public static class GameSettings
     public static bool Vibration { get => GetInt("Vibration", 1) == 1; set => SetInt("Vibration", value ? 1 : 0); }
     public static bool ShowDebug { get => GetInt("Debug", 0) == 1; set => SetInt("Debug", value ? 1 : 0); }
     public static OrientationSetting Orientation { get => (OrientationSetting)GetInt("Orientation", 0); set => SetInt("Orientation", (int)value); }
-    public static SteeringSetting Steering { get => (SteeringSetting)GetInt("Steering", 0); set => SetInt("Steering", (int)value); }
+    // New key: the stick is the default; the old key was saved as BUTTONS whenever settings opened.
+    public static SteeringSetting Steering { get => (SteeringSetting)Mathf.Clamp(GetInt("Steering2", (int)SteeringSetting.Stick), 0, 2); set => SetInt("Steering2", (int)value); }
     public static int Bots { get => Mathf.Clamp(GetInt("Bots", 1), 0, 3); set => SetInt("Bots", Mathf.Clamp(value, 0, 3)); }
     /// <summary>CPU rival strength: 0 easy (stock cars), 1 normal, 2 hard (fast tuned cars). Prizes scale with it.</summary>
     public static int Difficulty { get => Mathf.Clamp(GetInt("Difficulty", 1), 0, 2); set => SetInt("Difficulty", Mathf.Clamp(value, 0, 2)); }

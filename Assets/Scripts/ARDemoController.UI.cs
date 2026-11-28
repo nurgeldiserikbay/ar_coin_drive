@@ -18,6 +18,7 @@ public sealed partial class ARDemoController
     private bool _rightHeld;
     private bool _goHeld;
     private bool _backHeld;
+    private Vector2 _stickInput;
     private TouchScreenKeyboard _nameKeyboard;
 
     private float W => _ui.Width;
@@ -131,31 +132,53 @@ public sealed partial class ARDemoController
         if (_garage != null && _garage.Texture != null) _ui.Image(hero, _garage.Texture);
         _ui.Image(Inset(logoRect, U(4f)), _logo);
 
-        const int rows = 4;
+        // Races and battles are the game: two big tiles. Free drive, multiplayer, garage and
+        // settings sit below. A switch picks the real room (AR) or a virtual one.
         var gap = U(10f);
-        var rowHeight = Mathf.Min(U(56f), (column.height - U(40f)) / rows - gap);
-        var y = column.y + (column.height - rows * (rowHeight + gap) - U(26f)) * 0.5f;
-        var arLabel = !_arChecked ? "CHECKING AR..." : _arSupported ? "DRIVE IN YOUR ROOM" : "AR NOT SUPPORTED";
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), arLabel, _arSupported ? UiKit.Look.Primary : UiKit.Look.Ghost, false, 17, UiIcon.Play)
-            && _arSupported)
-            OpenGamePicker(true);
-        y += rowHeight + gap;
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "PLAY WITHOUT AR", UiKit.Look.Accent, false, 17, UiIcon.Home))
-            OpenGamePicker(false);
-        y += rowHeight + gap;
-        if (_ui.Button(new Rect(column.x, y, column.width, rowHeight), "MULTIPLAYER", UiKit.Look.Normal, false, 17, UiIcon.People))
+        var switchHeight = U(40f);
+        var tileHeight = Mathf.Clamp((column.height - switchHeight - U(54f) * 2f - gap * 4f - U(26f)) , U(96f), U(150f));
+        var rowHeight = U(52f);
+        var total = switchHeight + gap + tileHeight + gap + rowHeight + gap + rowHeight + U(26f);
+        var y = column.y + Mathf.Max(0f, (column.height - total) * 0.5f);
+
+        var useAR = _arSupported && _menuUseAR;
+        if (_arSupported)
         {
-            _lobbyUseAR = _arSupported;
+            var choice = _ui.Segmented(new Rect(column.x, y, column.width, switchHeight), new[] { "IN YOUR ROOM (AR)", "VIRTUAL ROOM" }, useAR ? 0 : 1, 13);
+            if (choice != (useAR ? 0 : 1))
+            {
+                _menuUseAR = choice == 0;
+            }
+        }
+        else
+        {
+            _ui.Text(new Rect(column.x, y, column.width, switchHeight), !_arChecked ? "Checking AR..." : "AR is not available here: you play in a virtual room.", 12,
+                TextAnchor.MiddleCenter, UiKit.TextDim);
+        }
+
+        y += switchHeight + gap;
+        var half = (column.width - gap) * 0.5f;
+        var rivals = GameSettings.DifficultyNames[GameSettings.Difficulty];
+        if (_ui.Tile(new Rect(column.x, y, half, tileHeight), ModeTints[1], UiIcon.Flag, "RACE", "Win coins  •  " + rivals))
+            StartFromMenu(GameMode.Race, useAR);
+        if (_ui.Tile(new Rect(column.x + half + gap, y, half, tileHeight), ModeTints[2], UiIcon.Trophy, "BATTLE", "Knock them out"))
+            StartFromMenu(GameMode.Battle, useAR);
+        y += tileHeight + gap;
+
+        if (_ui.Button(new Rect(column.x, y, half, rowHeight), "FREE DRIVE", UiKit.Look.Normal, false, 15, UiIcon.Coin))
+            StartFromMenu(GameMode.Free, useAR);
+        if (_ui.Button(new Rect(column.x + half + gap, y, half, rowHeight), "FRIENDS", UiKit.Look.Accent, false, 15, UiIcon.People))
+        {
+            _lobbyUseAR = useAR;
             _screen = UiScreen.Lobby;
         }
 
         y += rowHeight + gap;
-        var pair = (column.width - gap) * 0.5f;
-        if (_ui.Button(new Rect(column.x, y, pair, rowHeight), "GARAGE", UiKit.Look.Normal, false, 16, UiIcon.Car))
+        if (_ui.Button(new Rect(column.x, y, half, rowHeight), "GARAGE", UiKit.Look.Normal, false, 15, UiIcon.Car))
             OpenGarage(UiScreen.Menu);
-        if (_ui.Button(new Rect(column.x + pair + gap, y, pair, rowHeight), "SETTINGS", UiKit.Look.Normal, false, 16, UiIcon.Gear))
+        if (_ui.Button(new Rect(column.x + half + gap, y, half, rowHeight), "SETTINGS", UiKit.Look.Normal, false, 15, UiIcon.Gear))
             OpenSettings(UiScreen.Menu);
-        y += rowHeight + U(10f);
+        y += rowHeight + U(8f);
         _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor]
             + " " + CarCatalog.Get(GameSettings.CarType).Name, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
         var carCondition = PlayerProfile.Condition(GameSettings.CarType);
@@ -461,7 +484,8 @@ public sealed partial class ARDemoController
         y += U(24f);
     }
 
-    private static readonly string[] UpgradeNames = { "ENGINE", "TYRES", "WEIGHT" };
+    private static readonly SteeringSetting[] SteeringOrder = { SteeringSetting.Stick, SteeringSetting.Buttons, SteeringSetting.Tilt };
+    private static readonly string[] UpgradeNames ={ "ENGINE", "TYRES", "WEIGHT" };
     private static readonly string[] UpgradeHints = { "top speed + acceleration", "grip + steering + off-road", "acceleration + steering, lighter in battle" };
 
     private void GarageTune(int car, float x, float y, float width, float room)
@@ -766,6 +790,27 @@ public sealed partial class ARDemoController
 
     /// <summary>True when the game-type picker leads to AR (scan the real floor), false for a virtual location.</summary>
     private bool _pickForAR;
+    private bool _pickedFromMenu;
+    private const string MenuARKey = "ACD.MenuAR";
+    private int _menuAR = -1;
+    // Read lazily: PlayerPrefs may not be used from a MonoBehaviour field initializer.
+    private bool _menuUseAR
+    {
+        get => (_menuAR < 0 ? _menuAR = PlayerPrefs.GetInt(MenuARKey, 1) : _menuAR) == 1;
+        set { _menuAR = value ? 1 : 0; PlayerPrefs.SetInt(MenuARKey, _menuAR); }
+    }
+
+    /// <summary>Menu tile: straight to the room (AR) or to the location list (virtual).</summary>
+    private void StartFromMenu(GameMode mode, bool ar)
+    {
+        _pickForAR = ar;
+        _pickedFromMenu = true;
+        _mode = mode;
+        PlayerPrefs.SetInt(LastModeKey, (int)_mode);
+        PlayerPrefs.Save();
+        if (ar) BeginAR();
+        else _screen = UiScreen.Locations;
+    }
 
     private static readonly GameMode[] PickerModes = { GameMode.Free, GameMode.Race, GameMode.Battle };
     private static readonly string[] ModeTitles = { "FREE DRIVE", "RACE", "BATTLE" };
@@ -786,6 +831,7 @@ public sealed partial class ARDemoController
     /// <summary>Play from the menu: first the game type, then (without AR) the location.</summary>
     private void OpenGamePicker(bool ar)
     {
+        _pickedFromMenu = false;
         _pickForAR = ar;
         _mode = (GameMode)Mathf.Clamp(PlayerPrefs.GetInt(LastModeKey, (int)GameMode.Free), 0, 2);
         _screen = UiScreen.Modes;
@@ -823,7 +869,7 @@ public sealed partial class ARDemoController
         _ui.Backdrop(new Rect(0f, 0f, W, H));
         var area = SafeRect();
         var modeIndex = Mathf.Max(0, System.Array.IndexOf(PickerModes, _mode));
-        PickerHeader(area, "CHOOSE A LOCATION", "Step 2 of 2  •  " + ModeTitles[modeIndex], UiScreen.Modes);
+        PickerHeader(area, "CHOOSE A LOCATION", (_pickedFromMenu ? "" : "Step 2 of 2  •  ") + ModeTitles[modeIndex], _pickedFromMenu ? UiScreen.Menu : UiScreen.Modes);
         var count = VirtualHouse.LocationNames.Length;
         for (var i = 0; i < count; i++)
         {
@@ -860,7 +906,7 @@ public sealed partial class ARDemoController
                 _screen = UiScreen.Menu;
                 break;
             case UiScreen.Locations:
-                _screen = UiScreen.Modes;
+                _screen = _pickedFromMenu ? UiScreen.Menu : UiScreen.Modes;
                 break;
             case UiScreen.Lobby:
                 if (IsClient) LeaveNetwork(true);
@@ -1043,8 +1089,8 @@ public sealed partial class ARDemoController
         GameSettings.EffectsVolume = SliderRow(x, ref y, columnWidth, row, "Effects", GameSettings.EffectsVolume);
         var vibration = SegmentRow(x, ref y, columnWidth, row, "Vibration", new[] { "ON", "OFF" }, GameSettings.Vibration ? 0 : 1);
         GameSettings.Vibration = vibration == 0;
-        var steering = SegmentRow(x, ref y, columnWidth, row, "Steering", new[] { "BUTTONS", "TILT" }, (int)GameSettings.Steering);
-        GameSettings.Steering = (SteeringSetting)steering;
+        var steering = SegmentRow(x, ref y, columnWidth, row, "Steering", new[] { "STICK", "BUTTONS", "TILT" }, System.Array.IndexOf(SteeringOrder, GameSettings.Steering));
+        GameSettings.Steering = SteeringOrder[Mathf.Clamp(steering, 0, SteeringOrder.Length - 1)];
         PrivacyRow(x, ref y, columnWidth, row);
 
         if (columns == 2)
@@ -1316,19 +1362,47 @@ public sealed partial class ARDemoController
 
     private void ScanningHud(Rect area, bool interactive)
     {
+        // Banner: a phone sweeping side to side, then the advice.
         var width = Mathf.Min(U(520f), area.width - U(60f));
-        var banner = new Rect(area.center.x - width * 0.5f, area.y, width, U(54f));
+        var message = GetPlacingMessage();
+        var iconWidth = U(64f);
+        var textWidth = width - iconWidth - U(16f);
+        var height = Mathf.Max(U(64f), _ui.TextHeight(message, 14, textWidth) + U(22f));
+        var banner = new Rect(area.center.x - width * 0.5f, area.y, width, height);
         _ui.Panel(banner);
-        _ui.Text(Inset(banner, U(10f)), GetPlacingMessage(), 14, TextAnchor.MiddleCenter, Color.white);
+        var sweep = _reticleValid ? 0f : Mathf.Sin(Time.unscaledTime * 2.4f) * U(14f);
+        var phone = new Rect(banner.x + iconWidth * 0.5f - U(10f) + sweep, banner.center.y - U(17f), U(20f), U(34f));
+        _ui.RoundedFill(phone, _reticleValid ? new Color(0.4f, 1f, 0.55f) : UiKit.AccentColor);
+        _ui.Fill(new Rect(phone.x + U(3f), phone.y + U(4f), phone.width - U(6f), phone.height - U(9f)), new Color(0.06f, 0.08f, 0.11f, 0.95f));
+        _ui.Text(new Rect(banner.x + iconWidth, banner.y, textWidth, banner.height), message, 14, TextAnchor.MiddleLeft, Color.white);
         if (IsOnline)
             _ui.Text(new Rect(banner.x, banner.yMax + U(4f), banner.width, U(20f)), IsHost ? "Hosting: players can join now." : _net.Status,
                 12, TextAnchor.MiddleCenter, UiKit.AccentColor, false, true);
+
+        // Aim mark in the middle of the screen until the ring finds the floor.
+        if (!_reticleValid)
+        {
+            var c = new Vector2(W * 0.5f, H * 0.5f);
+            var len = U(12f);
+            var thick = U(3f);
+            var gapC = U(8f);
+            var mark = new Color(1f, 1f, 1f, 0.8f);
+            _ui.Fill(new Rect(c.x - gapC - len, c.y - thick * 0.5f, len, thick), mark);
+            _ui.Fill(new Rect(c.x + gapC, c.y - thick * 0.5f, len, thick), mark);
+            _ui.Fill(new Rect(c.x - thick * 0.5f, c.y - gapC - len, thick, len), mark);
+            _ui.Fill(new Rect(c.x - thick * 0.5f, c.y + gapC, thick, len), mark);
+        }
+
         Toasts(area);
         if (!interactive) return;
 
-        var buttonWidth = Mathf.Min(U(260f), area.width);
-        var stuck = Time.unscaledTime - _scanStartTime > 6f || ARSession.state == ARSessionState.Unsupported;
-        if (stuck && _ui.Button(new Rect(area.center.x - buttonWidth * 0.5f, area.yMax - U(48f), buttonWidth, U(48f)), "PLAY IN VIRTUAL ROOM", UiKit.Look.Accent))
+        var buttonWidth = Mathf.Min(U(280f), area.width);
+        var buttonHeight = U(58f);
+        if (_reticleValid && _ui.Button(new Rect(area.center.x - buttonWidth * 0.5f, area.yMax - buttonHeight, buttonWidth, buttonHeight), "PLACE HERE", UiKit.Look.Primary, false, 18, UiIcon.Pin))
+            TryPlaceArena(new Vector2(-1f, -1f));
+
+        var stuck = Time.unscaledTime - _scanStartTime > 10f || ARSession.state == ARSessionState.Unsupported;
+        if (stuck && !_reticleValid && _ui.Button(new Rect(area.center.x - buttonWidth * 0.5f, area.yMax - U(48f), buttonWidth, U(48f)), "PLAY IN VIRTUAL ROOM", UiKit.Look.Accent))
             EnterVirtualMode();
         if (GameSettings.ShowDebug) DebugLine(area);
     }
@@ -1383,7 +1457,11 @@ public sealed partial class ARDemoController
             // Stop short of the standings box (top right, 150 wide) when it is shown.
             var messageWidth = Mathf.Min(U(420f), area.width * 0.6f);
             if (StandingsShown) messageWidth = Mathf.Min(messageWidth, area.width - U(150f) - U(12f));
-            _ui.Text(new Rect(area.x + U(2f), chip.yMax + U(6f), messageWidth, U(60f)), _message, 13,
+            // On a dark backing so it reads over a bright floor or track.
+            var textHeight = Mathf.Min(_ui.TextHeight(_message, 13, messageWidth - U(16f)), Landscape ? U(40f) : U(60f));
+            var backing = new Rect(area.x, chip.yMax + U(5f), messageWidth, textHeight + U(10f));
+            _ui.RoundedFill(backing, new Color(0.03f, 0.05f, 0.08f, 0.62f * alpha));
+            _ui.Text(new Rect(backing.x + U(8f), backing.y + U(5f), backing.width - U(16f), textHeight), _message, 13,
                 TextAnchor.UpperLeft, new Color(1f, 1f, 1f, alpha), false, true);
         }
     }
@@ -1481,7 +1559,7 @@ public sealed partial class ARDemoController
         var width = U(104f);
         var height = U(38f);
         // Below the status chip and its hint: the hint is narrower in portrait, so it may take three lines.
-        var y = area.y + U(52f) + (Landscape ? U(50f) : U(72f));
+        var y = area.y + U(52f) + (Landscape ? U(58f) : U(80f));
         var x = area.x;
         if (_virtualMode && !_buildMode)
         {
@@ -1556,6 +1634,19 @@ public sealed partial class ARDemoController
         var small = U(Landscape ? 70f : 66f);
         var bottom = area.yMax;
         var gap = U(12f);
+
+        if (GameSettings.Steering == SteeringSetting.Stick)
+        {
+            // One thumb does everything: the car drives the way the stick points on screen.
+            var radius = U(Landscape ? 62f : 58f);
+            var zone = new Rect(area.x - U(16f), area.y + area.height * 0.38f, area.width * 0.6f, area.height * 0.62f + U(16f));
+            var rest = new Vector2(area.x + radius + U(6f), bottom - radius - U(6f));
+            var stick = _ui.Stick(zone, rest, radius);
+            if (!_ui.Drawing) _stickInput = stick;
+            if (_state == GameState.Ready && !IsClient)
+                _ui.Text(new Rect(0f, bottom - radius * 2f - U(40f), W, U(26f)), "Push the stick to drive", 15, TextAnchor.MiddleCenter, Color.white, true, true);
+            return;
+        }
 
         if (GameSettings.Steering == SteeringSetting.Buttons)
         {

@@ -33,6 +33,7 @@ public sealed class UiKit
     private GUIStyle _box;
     private GUIStyle _shadedBox;   // rounded, lighter at the top: buttons and panels
     private GUIStyle _ringBox;     // rounded outline
+    private GUIStyle _glossBox;    // glossy button face
     private Texture2D _backdrop;
     private readonly Dictionary<int, GUIStyle> _labels = new Dictionary<int, GUIStyle>();
     private Font _font;
@@ -235,20 +236,73 @@ public sealed class UiKit
         }
 
         var pressed = IsPressed(rect);
-        if (pressed) rect = Shrink(rect, 0.04f);
         if (look != Look.Ghost)
         {
-            DrawShadow(rect);
-            DrawShaded(rect, Tint(look, selected, pressed));
-            DrawRing(rect, new Color(1f, 1f, 1f, selected ? 0.30f : 0.10f));
+            var face = DrawChunky(rect, Tint(look, selected, false), selected, pressed);
+            DrawContent(face, label, fontSize, icon);
+            return false;
         }
-        else
-        {
-            DrawRounded(rect, Tint(look, selected, pressed));
-            DrawRing(rect, selected ? AccentColor : new Color(1f, 1f, 1f, 0.16f));
-        }
+
+        if (pressed) rect = Shrink(rect, 0.04f);
+        DrawRounded(rect, Tint(look, selected, pressed));
+        DrawRing(rect, selected ? AccentColor : new Color(1f, 1f, 1f, 0.16f));
         DrawContent(rect, label, fontSize, icon);
         return false;
+    }
+
+    /// <summary>
+    /// Chunky game button body: shadow, a darker lip below the face, and the glossy face, which
+    /// sinks onto the lip while pressed. Returns the face rect for the content.
+    /// </summary>
+    private Rect DrawChunky(Rect rect, Color tint, bool selected, bool pressed)
+    {
+        var lip = Mathf.Round(Mathf.Min(U(4f), rect.height * 0.1f));
+        var face = new Rect(rect.x, rect.y + (pressed ? lip : 0f), rect.width, rect.height - lip);
+        DrawRounded(new Rect(rect.x, rect.y + lip + U(2f), rect.width, rect.height - lip), new Color(0f, 0f, 0f, 0.30f));
+        DrawRounded(new Rect(rect.x, rect.y + lip, rect.width, rect.height - lip), Darken(tint, 0.55f));
+        DrawGloss(face, pressed ? Color.Lerp(tint, Color.white, 0.12f) : tint);
+        DrawRing(face, selected ? new Color(1f, 0.80f, 0.45f, 0.9f) : new Color(1f, 1f, 1f, 0.16f));
+        return face;
+    }
+
+    /// <summary>
+    /// Big coloured tile for the main choices: icon top-left, a large faded icon as a watermark,
+    /// a bold title and a short line under it.
+    /// </summary>
+    public bool Tile(Rect rect, Color tint, UiIcon icon, string title, string subtitle)
+    {
+        if (!Drawing)
+        {
+            if (!TapIn(rect)) return false;
+            GameAudio.Instance.Play(GameAudio.Sfx.Click, 0.6f);
+            return true;
+        }
+
+        var face = DrawChunky(rect, tint, false, IsPressed(rect));
+        var pad = U(12f);
+        var mark = face.height * 0.95f;
+        Icon(new Rect(face.xMax - mark * 0.78f, face.y + face.height * 0.08f, mark, mark), icon, new Color(1f, 1f, 1f, 0.13f));
+        var iconSize = Mathf.Min(face.height * 0.34f, U(40f));
+        Icon(new Rect(face.x + pad, face.y + pad, iconSize, iconSize), icon, Color.white);
+        var subtitleHeight = string.IsNullOrEmpty(subtitle) ? 0f : U(18f);
+        var titleRect = new Rect(face.x + pad, face.yMax - pad - subtitleHeight - U(30f), face.width - pad * 2f, U(30f));
+        DrawLabel(titleRect, title, FitSize(title, 24, titleRect.width, true), TextAnchor.LowerLeft, Color.white, true, true);
+        if (subtitleHeight > 0f)
+            DrawLabel(new Rect(titleRect.x, titleRect.yMax, titleRect.width, subtitleHeight), subtitle, FitSize(subtitle, 12, titleRect.width, false),
+                TextAnchor.MiddleLeft, new Color(1f, 1f, 1f, 0.85f), false, true);
+        return false;
+    }
+
+    private static Color Darken(Color c, float amount) => new Color(c.r * amount, c.g * amount, c.b * amount, Mathf.Max(c.a, 0.9f));
+
+    /// <summary>Button face: glossy upper half, deeper lower half.</summary>
+    private void DrawGloss(Rect rect, Color color)
+    {
+        if (rect.height < _roundedRadius * 2f) { DrawRounded(rect, color); return; }
+        var previous = GUI.color;
+        GUI.color = A(color);
+        GUI.Box(rect, GUIContent.none, _glossBox);
+        GUI.color = previous;
     }
 
     /// <summary>A control that is active while a finger rests on it (steering, throttle).</summary>
@@ -270,6 +324,81 @@ public sealed class UiKit
         DrawContent(rect, label, fontSize, icon);
         return false;
     }
+
+    private int _stickId = -1;
+    private Vector2 _stickOrigin;
+    private Vector2 _stickPosition;
+
+    /// <summary>
+    /// Floating thumb stick: a finger that lands anywhere in <paramref name="zone"/> becomes the
+    /// stick's centre; the result is the drag from there, -1..1 per axis, +y = up the screen.
+    /// When idle the stick is drawn at <paramref name="rest"/> so players see where to put a thumb.
+    /// </summary>
+    public Vector2 Stick(Rect zone, Vector2 rest, float radius)
+    {
+        if (Drawing)
+        {
+            var active = _stickId >= 0;
+            var centre = active ? _stickOrigin : rest;
+            var knob = active ? _stickPosition : rest;
+            var baseRect = new Rect(centre.x - radius, centre.y - radius, radius * 2f, radius * 2f);
+            DrawCircle(new Rect(baseRect.x, baseRect.y + U(3f), baseRect.width, baseRect.height), new Color(0f, 0f, 0f, 0.22f));
+            DrawCircle(baseRect, new Color(0.06f, 0.09f, 0.13f, active ? 0.55f : 0.40f));
+            DrawCircle(Shrink(baseRect, 0.94f), new Color(1f, 1f, 1f, active ? 0.10f : 0.06f));
+            // Four direction ticks around the rim.
+            var tick = U(5f);
+            for (var i = 0; i < 4; i++)
+            {
+                var direction = new Vector2(Mathf.Cos(i * Mathf.PI * 0.5f), Mathf.Sin(i * Mathf.PI * 0.5f));
+                var p = centre + direction * (radius - U(12f));
+                DrawCircle(new Rect(p.x - tick * 0.5f, p.y - tick * 0.5f, tick, tick), new Color(1f, 1f, 1f, 0.35f));
+            }
+
+            var knobRadius = radius * 0.46f;
+            var knobRect = new Rect(knob.x - knobRadius, knob.y - knobRadius, knobRadius * 2f, knobRadius * 2f);
+            DrawCircle(new Rect(knobRect.x, knobRect.y + U(3f), knobRect.width, knobRect.height), new Color(0f, 0f, 0f, 0.35f));
+            DrawCircle(knobRect, active ? new Color(1.00f, 0.56f, 0.10f, 0.95f) : new Color(0.92f, 0.94f, 0.97f, 0.85f));
+            DrawCircle(Shrink(knobRect, 0.62f), new Color(1f, 1f, 1f, active ? 0.28f : 0.5f));
+            return Vector2.zero;
+        }
+
+        var found = false;
+        if (_stickId >= 0)
+        {
+            foreach (var finger in _fingers)
+            {
+                if (finger.Id != _stickId) continue;
+                _stickPosition = finger.Position;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            _stickId = -1;
+            foreach (var finger in _fingers)
+            {
+                if (!finger.Began || _tapsUsed.Contains(finger.Id) || !zone.Contains(finger.Position) || Blocked(finger.Position)) continue;
+                _stickId = finger.Id;
+                _stickOrigin = _stickPosition = finger.Position;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) return Vector2.zero;
+        _owned.Add(_stickId);
+        _tapsUsed.Add(_stickId);
+        // The centre trails a finger that slides past the rim, so turning back responds at once.
+        var offset = _stickPosition - _stickOrigin;
+        if (offset.magnitude > radius) _stickOrigin = _stickPosition - offset.normalized * radius;
+        offset = (_stickPosition - _stickOrigin) / radius;
+        return new Vector2(offset.x, -offset.y);
+    }
+
+    /// <summary>Lets go of the stick (screen changes, round ends).</summary>
+    public void ReleaseStick() => _stickId = -1;
 
     public float Slider(Rect rect, float value)
     {
@@ -464,7 +593,7 @@ public sealed class UiKit
             case Look.Steer: color = new Color(0.10f, 0.13f, 0.17f, 0.62f); break;
             case Look.Go: color = new Color(0.10f, 0.62f, 0.30f, 0.80f); break;
             case Look.Brake: color = new Color(0.78f, 0.24f, 0.12f, 0.75f); break;
-            default: color = new Color(0.16f, 0.20f, 0.26f, 0.90f); break;
+            default: color = new Color(0.19f, 0.24f, 0.33f, 0.94f); break;
         }
 
         if (selected && look == Look.Ghost) color = new Color(1f, 0.56f, 0.10f, 0.25f);
@@ -488,7 +617,7 @@ public sealed class UiKit
         if (icon == UiIcon.None)
         {
             if (!string.IsNullOrEmpty(label))
-                DrawLabel(rect, label, FitSize(label, fontSize, rect.width - U(10f), true), TextAnchor.MiddleCenter, Color.white, true, false);
+                DrawLabel(rect, label, FitSize(label, fontSize, rect.width - U(10f), true), TextAnchor.MiddleCenter, Color.white, true, true);
             return;
         }
 
@@ -505,7 +634,7 @@ public sealed class UiKit
         var total = iconSize + U(8f) + textWidth;
         var x = rect.center.x - total * 0.5f;
         Icon(new Rect(x, rect.center.y - iconSize * 0.5f, iconSize, iconSize), icon, Color.white);
-        DrawLabel(new Rect(x + iconSize + U(8f), rect.y, textWidth + U(4f), rect.height), label, size, TextAnchor.MiddleLeft, Color.white, true, false);
+        DrawLabel(new Rect(x + iconSize + U(8f), rect.y, textWidth + U(4f), rect.height), label, size, TextAnchor.MiddleLeft, Color.white, true, true);
     }
 
     private void DrawRounded(Rect rect, Color color, float radius = -1f)
@@ -587,6 +716,11 @@ public sealed class UiKit
                 normal = { background = ShadedTexture(radius) },
                 border = new RectOffset(radius, radius, radius, radius)
             };
+            _glossBox = new GUIStyle
+            {
+                normal = { background = GlossTexture(radius) },
+                border = new RectOffset(radius, radius, radius, radius)
+            };
             _ringBox = new GUIStyle
             {
                 normal = { background = RingTexture(radius, Mathf.Max(1f, Scale * 1.2f)) },
@@ -663,6 +797,38 @@ public sealed class UiKit
                 var cy = Mathf.Clamp(y + 0.5f, radius, height - radius);
                 var distance = new Vector2(x + 0.5f - cx, y + 0.5f - cy).magnitude;
                 var alpha = Mathf.Clamp01(radius - distance + 0.5f);
+                pixels[y * width + x] = new Color32(value, value, value, (byte)(alpha * 255f));
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(false, true);
+        return texture;
+    }
+
+    /// <summary>Glossy button face: bright upper half with a soft step to a deeper lower half.</summary>
+    private static Texture2D GlossTexture(int radius)
+    {
+        var width = radius * 2 + 2;
+        const int height = 96;
+        var texture = new Texture2D(width, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        var pixels = new Color32[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            // Rows run bottom-up: t = 1 at the top edge.
+            var t = y / (height - 1f);
+            var lower = Mathf.Lerp(0.74f, 0.86f, t / 0.5f);
+            var upper = Mathf.Lerp(0.95f, 1.08f, (t - 0.5f) / 0.5f);
+            var shade = Mathf.Lerp(lower, upper, Mathf.SmoothStep(0f, 1f, (t - 0.46f) / 0.08f));
+            for (var x = 0; x < width; x++)
+            {
+                var cx = Mathf.Clamp(x + 0.5f, radius, width - radius);
+                var cy = Mathf.Clamp(y + 0.5f, radius, height - radius);
+                var distance = new Vector2(x + 0.5f - cx, y + 0.5f - cy).magnitude;
+                var alpha = Mathf.Clamp01(radius - distance + 0.5f);
+                // A thin light line along the very top edge reads as a bevel.
+                var bevel = radius - distance < 2.5f && y > height - radius ? 0.12f : 0f;
+                var value = (byte)(Mathf.Clamp01(shade + bevel) * 255f);
                 pixels[y * width + x] = new Color32(value, value, value, (byte)(alpha * 255f));
             }
         }
