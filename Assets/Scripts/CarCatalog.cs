@@ -16,22 +16,23 @@ public sealed class CarSpec
     public int DefaultColor;
 
     // Driving
-    public float TopSpeed;      // m/s at toy scale on the race track
+    public float TopSpeed;      // m/s at toy scale on the race track (1 m/s is about 65 km/h at 1:18)
     public float Acceleration;  // m/s²
     public float TurnRate;      // degrees per second at full lock
     public float Grip;          // how fast sideways slide is killed (1/s)
     public float Drift;         // 0..1: how easily the rear lets go at speed
     public float Mass;          // battle pushing weight
     public float OffRoad;       // speed kept on astroturf / grass (0..1)
+    public float SizeFactor = 1f; // model size against the 1:18 baseline (big vehicles above 1)
 
     // Footprint at toy scale (half sizes, metres)
     public float HalfWidth;
     public float HalfLength;
 
     // Garage ratings 0..10
-    public int SpeedRating => Mathf.RoundToInt(Mathf.InverseLerp(0.50f, 0.88f, TopSpeed) * 9f + 1f);
-    public int AccelRating => Mathf.RoundToInt(Mathf.InverseLerp(1.28f, 2.16f, Acceleration) * 9f + 1f);
-    public int HandlingRating => Mathf.RoundToInt(Mathf.InverseLerp(105f, 170f, TurnRate) * 5f + Mathf.InverseLerp(7f, 14f, Grip) * 4f + 1f);
+    public int SpeedRating => Mathf.RoundToInt(Mathf.InverseLerp(0.65f, 1.15f, TopSpeed) * 9f + 1f);
+    public int AccelRating => Mathf.RoundToInt(Mathf.InverseLerp(1.73f, 2.92f, Acceleration) * 9f + 1f);
+    public int HandlingRating => Mathf.RoundToInt(Mathf.InverseLerp(121f, 196f, TurnRate) * 5f + Mathf.InverseLerp(7f, 14f, Grip) * 4f + 1f);
     public int WeightRating => Mathf.RoundToInt(Mathf.InverseLerp(0.8f, 1.7f, Mass) * 9f + 1f);
 }
 
@@ -50,50 +51,50 @@ public static class CarCatalog
         new CarSpec
         {
             Id = "buggy", Name = "Mudlark RC", Class = "RC buggy", Body = CarBody.Buggy, DefaultColor = 0,
-            TopSpeed = 0.60f, Acceleration = 1.60f, TurnRate = 140f, Grip = 12f, Drift = 0.2f, Mass = 0.9f, OffRoad = 0.85f,
-            HalfWidth = 0.069f, HalfLength = 0.115f
+            TopSpeed = 0.78f, Acceleration = 2.16f, TurnRate = 161f, Grip = 12f, Drift = 0.2f, Mass = 0.9f, OffRoad = 0.85f,
+            HalfWidth = 0.0575f, HalfLength = 0.096f
         },
         new CarSpec
         {
             Id = "kaze", Name = "Kaze R", Class = "Tuner coupe", Body = CarBody.Tuner, DefaultColor = 6,
-            TopSpeed = 0.70f, Acceleration = 1.68f, TurnRate = 152f, Grip = 10.5f, Drift = 0.7f, Mass = 1.0f, OffRoad = 0.55f,
+            TopSpeed = 0.91f, Acceleration = 2.27f, TurnRate = 175f, Grip = 10.5f, Drift = 0.7f, Mass = 1.0f, OffRoad = 0.55f,
             HalfWidth = 0.052f, HalfLength = 0.124f
         },
         new CarSpec
         {
             Id = "brute", Name = "Brute V8", Class = "Muscle", Body = CarBody.Muscle, DefaultColor = 7,
-            TopSpeed = 0.79f, Acceleration = 2.05f, TurnRate = 118f, Grip = 8.5f, Drift = 0.55f, Mass = 1.35f, OffRoad = 0.5f,
+            TopSpeed = 1.03f, Acceleration = 2.77f, TurnRate = 136f, Grip = 8.5f, Drift = 0.55f, Mass = 1.35f, OffRoad = 0.5f,
             HalfWidth = 0.054f, HalfLength = 0.133f
         },
         new CarSpec
         {
             Id = "vortex", Name = "Vortex S", Class = "Supercar", Body = CarBody.Super, DefaultColor = 2,
-            TopSpeed = 0.86f, Acceleration = 1.95f, TurnRate = 146f, Grip = 13.5f, Drift = 0.25f, Mass = 1.05f, OffRoad = 0.4f,
+            TopSpeed = 1.12f, Acceleration = 2.63f, TurnRate = 168f, Grip = 13.5f, Drift = 0.25f, Mass = 1.05f, OffRoad = 0.4f,
             HalfWidth = 0.056f, HalfLength = 0.127f
         },
         new CarSpec
         {
             Id = "dune", Name = "Dune R", Class = "Rally hatch", Body = CarBody.Rally, DefaultColor = 1,
-            TopSpeed = 0.68f, Acceleration = 1.84f, TurnRate = 166f, Grip = 10f, Drift = 0.45f, Mass = 0.95f, OffRoad = 0.9f,
+            TopSpeed = 0.88f, Acceleration = 2.48f, TurnRate = 191f, Grip = 10f, Drift = 0.45f, Mass = 0.95f, OffRoad = 0.9f,
             HalfWidth = 0.050f, HalfLength = 0.113f
         },
         new CarSpec
         {
             Id = "titan", Name = "Titan X", Class = "Off-roader", Body = CarBody.Offroad, DefaultColor = 3,
-            TopSpeed = 0.62f, Acceleration = 1.47f, TurnRate = 112f, Grip = 10f, Drift = 0.3f, Mass = 1.65f, OffRoad = 1f,
-            HalfWidth = 0.058f, HalfLength = 0.130f
+            TopSpeed = 0.81f, Acceleration = 1.98f, TurnRate = 129f, Grip = 10f, Drift = 0.3f, Mass = 1.65f, OffRoad = 1f,
+            SizeFactor = 1.07f, HalfWidth = 0.062f, HalfLength = 0.139f
         },
         // Premium cars (bought in the store for real money).
         new CarSpec
         {
             Id = "stinger", Name = "Stinger GT", Class = "Grand tourer", Body = CarBody.GT, DefaultColor = 5,
-            TopSpeed = 0.85f, Acceleration = 2.00f, TurnRate = 142f, Grip = 12f, Drift = 0.5f, Mass = 1.25f, OffRoad = 0.5f,
+            TopSpeed = 1.10f, Acceleration = 2.70f, TurnRate = 163f, Grip = 12f, Drift = 0.5f, Mass = 1.25f, OffRoad = 0.5f,
             HalfWidth = 0.055f, HalfLength = 0.131f
         },
         new CarSpec
         {
             Id = "apex", Name = "Apex LM", Class = "Endurance prototype", Body = CarBody.Proto, DefaultColor = 8,
-            TopSpeed = 0.91f, Acceleration = 2.08f, TurnRate = 150f, Grip = 14.5f, Drift = 0.15f, Mass = 1.0f, OffRoad = 0.35f,
+            TopSpeed = 1.18f, Acceleration = 2.81f, TurnRate = 172f, Grip = 14.5f, Drift = 0.15f, Mass = 1.0f, OffRoad = 0.35f,
             HalfWidth = 0.056f, HalfLength = 0.133f
         }
     };
@@ -158,6 +159,7 @@ public static class CarTuning
             Drift = b.Drift,
             Mass = b.Mass * (1f - 0.05f * tune.Weight),
             OffRoad = Mathf.Min(1f, b.OffRoad * (1f + 0.04f * tune.Tyres)),
+            SizeFactor = b.SizeFactor,
             HalfWidth = b.HalfWidth * CarCatalog.GameScale,
             HalfLength = b.HalfLength * CarCatalog.GameScale
         };

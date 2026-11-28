@@ -51,11 +51,20 @@ public static class CarModelBuilder
         var shape = GetShape(spec.Body);
         var root = new GameObject(spec.Name);
         root.transform.SetParent(parent, false);
-        CreateContactShadow(root.transform, shape);
+        // Big vehicles are built a little larger than the 1:18 baseline (the rig still sits on the root).
+        var model = root.transform;
+        if (!Mathf.Approximately(spec.SizeFactor, 1f))
+        {
+            model = new GameObject("Model").transform;
+            model.SetParent(root.transform, false);
+            model.localScale = Vector3.one * spec.SizeFactor;
+        }
+
+        CreateContactShadow(model, shape);
         var material = PaintMaterial(paint, look.Finish);
 
         var body = new GameObject("Body");
-        body.transform.SetParent(root.transform, false);
+        body.transform.SetParent(model, false);
         body.AddComponent<MeshFilter>().sharedMesh = GetBodyMesh(spec.Body, CarCatalog.Scale, look.Spoiler, look.Stripes);
         body.AddComponent<MeshRenderer>().sharedMaterial = material;
 
@@ -68,7 +77,7 @@ public static class CarModelBuilder
             foreach (var side in new[] { -1f, 1f })
             {
                 var pivot = new GameObject("Wheel").transform;
-                pivot.SetParent(root.transform, false);
+                pivot.SetParent(model, false);
                 pivot.localPosition = new Vector3(side * shape.Track, shape.WheelRadius, z) * s;
                 var spin = new GameObject("Spin").transform;
                 spin.SetParent(pivot, false);
@@ -82,7 +91,7 @@ public static class CarModelBuilder
             }
         }
 
-        root.AddComponent<ProceduralCarRig>().Configure(body.transform, pivots.ToArray(), spinners.ToArray(), shape.WheelRadius * s);
+        root.AddComponent<ProceduralCarRig>().Configure(body.transform, pivots.ToArray(), spinners.ToArray(), shape.WheelRadius * s * spec.SizeFactor);
         return root;
     }
 

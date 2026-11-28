@@ -1,4 +1,4 @@
-﻿#if UI_CAPTURE
+#if UI_CAPTURE
 using System.Collections;
 using System.IO;
 using UnityEngine;
@@ -28,6 +28,13 @@ public sealed partial class ARDemoController
 
     private IEnumerator CaptureAllScreens()
     {
+        if (System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-layouts") >= 0)
+        {
+            yield return LayoutShots();
+            Application.Quit();
+            yield break;
+        }
+
         if (System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-storeart") >= 0)
         {
             yield return StoreArtShots();
@@ -250,6 +257,53 @@ public sealed partial class ARDemoController
 
         CaptureAutopilot = false;
         Debug.Log("STOREART_DONE " + folder);
+    }
+
+    /// <summary>Every location from above and at an angle, with a race track and the battle ring (layout review).</summary>
+    private IEnumerator LayoutShots()
+    {
+        var folder = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "layouts"));
+        Directory.CreateDirectory(folder);
+        Screen.SetResolution(1600, 900, FullScreenMode.Windowed);
+        yield return new WaitForSecondsRealtime(2f);
+        CaptureHideUi = true;
+        GameSettings.Bots = 3;
+        foreach (var location in new[] { GameLocation.House, GameLocation.Backyard, GameLocation.Workshop })
+        {
+            GameSettings.Location = location;
+            foreach (var size in new[] { TrackSize.S, TrackSize.L })
+            {
+                GameSettings.Track = TrackLayout.Twister;
+                GameSettings.TrackSize = size;
+                EnterVirtualMode();
+                yield return new WaitForSecondsRealtime(2f);
+                _screen = UiScreen.Game;
+                if (_mode != GameMode.Race) ChangeMode(GameMode.Race);
+                ApplyTrackChoice();
+                StartRound();
+                yield return LayoutViews(folder, location + "-race-" + size);
+            }
+
+            GameSettings.ArenaSize = 1;
+            ChangeMode(GameMode.Battle);
+            yield return LayoutViews(folder, location + "-battle-M");
+            ChangeMode(GameMode.Race);
+        }
+
+        CaptureHideUi = false;
+        CaptureCameraLocked = false;
+    }
+
+    private IEnumerator LayoutViews(string folder, string name)
+    {
+        yield return new WaitForSecondsRealtime(1f);
+        LockCamera(new Vector3(0f, 2.4f, -0.01f), Vector3.zero);
+        _arCamera.fieldOfView = 92f;
+        yield return Shot(folder, "top", name);
+        LockCamera(new Vector3(0f, 1.9f, -2.3f), new Vector3(0f, 0f, 0.3f));
+        _arCamera.fieldOfView = 60f;
+        yield return Shot(folder, "angle", name);
+        CaptureCameraLocked = false;
     }
 
     /// <summary>Starts the round at once (no countdown) and lets every car race for a while.</summary>

@@ -9,12 +9,12 @@ using UnityEngine;
 public sealed partial class ARDemoController
 {
     // Toy-scale gravity: real gravity would give 2 mm hops at RC car speeds.
-    private const float StuntGravity = 2.4f;
-    private const float JumpLift = 1.0f;          // upward m/s per m/s of speed at the lip
-    private const float SpinRate = 620f;          // degrees per second at full steering
+    private const float StuntGravity = 3.6f;
+    private const float JumpLift = 0.95f;         // upward m/s per m/s of speed at the lip
+    private const float SpinRate = 780f;          // degrees per second at full steering
     private const float CleanLanding = 40f;       // degrees off a full turn that still lands
-    private const float BigAirSeconds = 0.45f;
-    private const float LoopMinSpeed = 0.45f;
+    private const float BigAirSeconds = 0.40f;
+    private const float LoopMinSpeed = 0.55f;
 
     /// <summary>Runs the car while it flies or rides a loop. Returns true when it did.</summary>
     private bool StuntStep(Car car, float dt)
@@ -64,7 +64,7 @@ public sealed partial class ARDemoController
         car.VSpeed = car.Speed * JumpLift;
         car.AirTime = 0f;
         car.Spin = 0f;
-        if (car.IsLocal && car.Speed > 0.35f) ShowHint("AIR!  Steer to spin");
+        if (car.IsLocal && car.Speed > 0.45f) ShowHint("AIR!  Steer to spin");
     }
 
     private void Fly(Car car, float dt)

@@ -80,7 +80,7 @@ public sealed partial class ARDemoController
     private void MenuScreen()
     {
         var area = SafeRect();
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, _cameraFrameCount > 0 ? 0.7f : 1f));
+        _ui.Backdrop(new Rect(0f, 0f, W, H), _cameraFrameCount > 0 ? 0.75f : 1f);
         if (_vipOpen)
         {
             VipPanel(area);
@@ -252,7 +252,7 @@ public sealed partial class ARDemoController
 
     private void GarageScreen()
     {
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
+        _ui.Backdrop(new Rect(0f, 0f, W, H));
         var area = SafeRect();
         Rect preview;
         Rect info;
@@ -487,21 +487,11 @@ public sealed partial class ARDemoController
 
     private void TracksScreen()
     {
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 0.96f));
+        _ui.Backdrop(new Rect(0f, 0f, W, H));
         var area = SafeRect();
         _ui.TextFit(new Rect(area.x, area.y, area.width - U(120f), U(32f)), "TRACKS & ARENAS", 22, TextAnchor.MiddleLeft, Color.white, true);
         if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "DONE", UiKit.Look.Primary))
-        {
-            GameSettings.Save();
-            _screen = UiScreen.Pause;
-            var track = RaceTrack.Shared;
-            if (track.Layout != GameSettings.Track || track.Size != GameSettings.TrackSize
-                || _arenaShape != GameSettings.Arena || _arenaSize != GameSettings.ArenaSize)
-            {
-                ApplyTrackChoice();
-                StartRound();
-            }
-        }
+            CloseTracks();
 
         Rect list;
         Rect map;
@@ -610,7 +600,7 @@ public sealed partial class ARDemoController
 
     private void LobbyScreen()
     {
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.02f, 0.04f, 0.07f, 0.9f));
+        _ui.Backdrop(new Rect(0f, 0f, W, H), 0.94f);
         var area = SafeRect();
         var panel = CenterPanel(area, U(560f), Mathf.Min(area.height, U(470f)));
         _ui.Panel(panel);
@@ -734,7 +724,7 @@ public sealed partial class ARDemoController
     /// <summary>Step 1: what to play. Tapping a card goes straight on.</summary>
     private void ModesScreen()
     {
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
+        _ui.Backdrop(new Rect(0f, 0f, W, H));
         var area = SafeRect();
         PickerHeader(area, "CHOOSE A GAME", _pickForAR ? "In your room (AR)" : "Step 1 of 2", UiScreen.Menu);
         for (var i = 0; i < PickerModes.Length; i++)
@@ -760,7 +750,7 @@ public sealed partial class ARDemoController
     /// <summary>Step 2 (without AR): where to drive. Tapping a card starts the game there.</summary>
     private void LocationsScreen()
     {
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.03f, 0.04f, 0.06f, 1f));
+        _ui.Backdrop(new Rect(0f, 0f, W, H));
         var area = SafeRect();
         var modeIndex = Mathf.Max(0, System.Array.IndexOf(PickerModes, _mode));
         PickerHeader(area, "CHOOSE A LOCATION", "Step 2 of 2  •  " + ModeTitles[modeIndex], UiScreen.Modes);
@@ -774,6 +764,85 @@ public sealed partial class ARDemoController
             GameSettings.Location = (GameLocation)i;
             GameSettings.Save();
             EnterVirtualMode();
+        }
+    }
+
+    /// <summary>
+    /// The phone's Back button (Escape in Unity): does what the screen's own BACK / DONE / CLOSE
+    /// button does. In a race it opens the pause menu; on the main menu it sends the app to the
+    /// background like any Android app.
+    /// </summary>
+    private void HandleBackButton()
+    {
+        if (!Input.GetKeyDown(KeyCode.Escape)) return;
+        if (_vipOpen)
+        {
+            _vipOpen = false;
+            return;
+        }
+
+        switch (_screen)
+        {
+            case UiScreen.Menu:
+                MoveAppToBackground();
+                break;
+            case UiScreen.Modes:
+                _screen = UiScreen.Menu;
+                break;
+            case UiScreen.Locations:
+                _screen = UiScreen.Modes;
+                break;
+            case UiScreen.Lobby:
+                if (IsClient) LeaveNetwork(true);
+                _screen = _arena != null ? UiScreen.Pause : UiScreen.Menu;
+                break;
+            case UiScreen.Settings:
+                GameSettings.Save();
+                _screen = _settingsReturn;
+                break;
+            case UiScreen.Garage:
+                CloseGarage();
+                break;
+            case UiScreen.Tracks:
+                CloseTracks();
+                break;
+            case UiScreen.Pause:
+                ClosePause();
+                break;
+            case UiScreen.Game:
+                if (_buildMode) _buildMode = false;
+                else if (_state == GameState.Finished && !IsClient) AfterRound(OpenPause);
+                else OpenPause();
+                break;
+        }
+    }
+
+    private static void MoveAppToBackground()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        try
+        {
+            using (var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+            using (var activity = player.GetStatic<AndroidJavaObject>("currentActivity"))
+                activity.Call<bool>("moveTaskToBack", true);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("moveTaskToBack failed: " + e.Message);
+        }
+#endif
+    }
+
+    private void CloseTracks()
+    {
+        GameSettings.Save();
+        _screen = UiScreen.Pause;
+        var track = RaceTrack.Shared;
+        if (track.Layout != GameSettings.Track || track.Size != GameSettings.TrackSize
+            || _arenaShape != GameSettings.Arena || _arenaSize != GameSettings.ArenaSize)
+        {
+            ApplyTrackChoice();
+            StartRound();
         }
     }
 
@@ -797,9 +866,13 @@ public sealed partial class ARDemoController
             return new Rect(area.x + index * (width + gap), top, width, area.yMax - top);
         }
 
-        var height = Mathf.Min(U(150f), (area.yMax - top - gap * (count - 1)) / count);
+        // Tall phones: bigger cards, the stack centred in the space under the header.
+        var available = area.yMax - top;
+        var height = Mathf.Min(U(210f), (available - gap * (count - 1)) / count);
+        var stack = height * count + gap * (count - 1);
+        var start = top + Mathf.Max(0f, (available - stack) * 0.4f);
         var maxWidth = Mathf.Min(area.width, U(560f));
-        return new Rect(area.center.x - maxWidth * 0.5f, top + index * (height + gap), maxWidth, height);
+        return new Rect(area.center.x - maxWidth * 0.5f, start + index * (height + gap), maxWidth, height);
     }
 
     /// <summary>
@@ -826,9 +899,8 @@ public sealed partial class ARDemoController
             text = new Rect(card.x + U(16f), tile.yMax + U(10f), card.width - U(32f) - U(40f), card.yMax - tile.yMax - U(20f));
         }
 
-        // Tile: colour, a lighter top half for depth, the icon in the middle.
-        _ui.RoundedFill(tile, tint);
-        _ui.RoundedFill(new Rect(tile.x, tile.y, tile.width, tile.height * 0.5f), new Color(1f, 1f, 1f, 0.10f));
+        // Tile: colour with a soft top-to-bottom shade, the icon in the middle.
+        _ui.ShadedFill(tile, tint);
         var iconSize = Mathf.Min(tile.height * 0.5f, tile.width * 0.5f, U(64f));
         _ui.Icon(new Rect(tile.center.x - iconSize * 0.5f, tile.center.y - iconSize * 0.5f, iconSize, iconSize), icon, Color.white);
 
@@ -873,7 +945,7 @@ public sealed partial class ARDemoController
 
     private void SettingsScreen()
     {
-        _ui.Fill(new Rect(0f, 0f, W, H), new Color(0.02f, 0.04f, 0.07f, 0.9f));
+        _ui.Backdrop(new Rect(0f, 0f, W, H), 0.94f);
         var area = SafeRect();
         var columns = Landscape ? 2 : 1;
         var rows = columns == 2 ? 6 : 12;

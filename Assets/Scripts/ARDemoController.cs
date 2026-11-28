@@ -219,6 +219,7 @@ public sealed partial class ARDemoController : MonoBehaviour
 
         UpdateNetwork();
         _leftHeld = _rightHeld = _goHeld = _backHeld = false;
+        HandleBackButton();
         RunUi();
         HandleFreeTouches();
         ReadDriveInput();
@@ -505,7 +506,16 @@ public sealed partial class ARDemoController : MonoBehaviour
 
         var floorPlane = RaycastHits[floorHitIndex].trackable as ARPlane;
         var hitPose = RaycastHits[floorHitIndex].pose;
-        var arenaPose = new Pose(hitPose.position + hitPose.up * 0.008f, hitPose.rotation);
+        // Turn the play area to face the player (a plane's own yaw is arbitrary), so the start
+        // straight runs across the view instead of at a random angle.
+        var rotation = hitPose.rotation;
+        if (_arCamera != null)
+        {
+            var look = Vector3.ProjectOnPlane(_arCamera.transform.forward, hitPose.up);
+            if (look.sqrMagnitude > 0.0001f) rotation = Quaternion.LookRotation(look.normalized, hitPose.up);
+        }
+
+        var arenaPose = new Pose(hitPose.position + hitPose.up * 0.008f, rotation);
 
         _anchor = null;
         var anchorDescriptor = _anchorManager != null ? _anchorManager.descriptor : null;
@@ -530,6 +540,23 @@ public sealed partial class ARDemoController : MonoBehaviour
         GameAudio.Instance.Play(GameAudio.Sfx.Place);
         StartRound();
         if (_anchor == null) ShowToast("Placed without an AR anchor. Avoid walking far from this spot.");
+        else WarnIfFloorTooSmall(floorPlane);
+    }
+
+    /// <summary>
+    /// Compares the scanned floor with what the chosen track or ring needs. ARCore planes keep
+    /// growing while you scan, so this is advice, not a refusal.
+    /// </summary>
+    private void WarnIfFloorTooSmall(ARPlane floor)
+    {
+        if (floor == null || _mode == GameMode.Free) return;
+        var needed = _mode == GameMode.Battle
+            ? BattleStartRadius * 2f + 0.1f
+            : RaceTrack.Shared.Bounds.width;
+        var have = Mathf.Min(floor.size.x, floor.size.y);
+        if (have >= needed * 0.8f) return;
+        ShowToast("This " + (_mode == GameMode.Battle ? "ring" : "track") + " needs about " + needed.ToString("0.0") + " x "
+                  + needed.ToString("0.0") + " m of floor; " + have.ToString("0.0") + " m scanned. Pick a smaller size if it hits furniture.");
     }
 
     /// <summary>Invisible floor that lets virtual shadows fall on the real floor.</summary>
@@ -579,6 +606,57 @@ public sealed partial class ARDemoController : MonoBehaviour
         if (_trackVisual != null) Destroy(_trackVisual);
         if (_battleRing != null) Destroy(_battleRing.gameObject);
         CreateArenaVisuals();
+    }
+
+    private GameObject _playMat;
+    private GameLocation _playMatLocation;
+
+    /// <summary>
+    /// Virtual locations: lays a mat under the current track or battle ring, sized to it with a
+    /// border, so the play area always sits neatly on its rug instead of hanging off a fixed one.
+    /// </summary>
+    private void UpdatePlayMat()
+    {
+        if (!_virtualMode || _arena == null || _mode == GameMode.Free)
+        {
+            if (_playMat != null) _playMat.SetActive(false);
+            return;
+        }
+
+        if (_playMat == null || _playMatLocation != _location)
+        {
+            if (_playMat != null) Destroy(_playMat);
+            _playMat = VirtualHouse.CreatePlayMat(_arena, _location);
+            _playMatLocation = _location;
+            if (_playMat == null) return;
+        }
+
+        Vector2 half;
+        Vector2 center;
+        if (_mode == GameMode.Battle)
+        {
+            center = Vector2.zero;
+            half = Vector2.one * (BattleStartRadius + 0.22f);
+        }
+        else
+        {
+            var track = RaceTrack.Shared;
+            var min = new Vector2(float.MaxValue, float.MaxValue);
+            var max = new Vector2(float.MinValue, float.MinValue);
+            foreach (var point in track.CenterLine)
+            {
+                min = Vector2.Min(min, point);
+                max = Vector2.Max(max, point);
+            }
+
+            var border = track.RailOffset + RaceTrack.TubeRadius + 0.16f;
+            center = (min + max) * 0.5f;
+            half = (max - min) * 0.5f + Vector2.one * border;
+        }
+
+        _playMat.SetActive(true);
+        _playMat.transform.localPosition = new Vector3(center.x, 0f, center.y);
+        _playMat.transform.localScale = new Vector3(half.x, 1f, half.y);
     }
 
     private void SetModeVisuals()
@@ -661,7 +739,7 @@ public sealed partial class ARDemoController : MonoBehaviour
             // Vertical FOV: wide enough in portrait, not fish-eyed in landscape.
             _arCamera.fieldOfView = Screen.width > Screen.height ? 58f : 80f;
             var eyeAnchor = _player.Rig != null ? _player.Rig.Body : car;
-            var eyeLocal = _player.Spec.Body == CarBody.Buggy ? new Vector3(0f, 0.108f, 0.09f) : CarModelBuilder.DriverEye(_player.Spec.Body);
+            var eyeLocal = _player.Spec.Body == CarBody.Buggy ? new Vector3(0f, 0.18f, 0.15f) * ProceduralCarFactory.CarScale : CarModelBuilder.DriverEye(_player.Spec.Body) * _player.Spec.SizeFactor;
             var eye = eyeAnchor.TransformPoint(eyeLocal);
             var look = eyeAnchor.rotation * Quaternion.Euler(5f, 0f, 0f);
             var eyeTransform = _arCamera.transform;

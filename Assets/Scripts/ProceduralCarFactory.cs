@@ -11,7 +11,7 @@ public enum ObstacleKind { Cone, Tyres, Wall }
 public static class ProceduralCarFactory
 {
     // Collision footprints that match the generated meshes (half sizes, metres, on the floor plane).
-    public const float CarScale = 0.6f;          // about a 22 cm long buggy, like a 1:18 RC car
+    public const float CarScale = 0.5f;          // an 18.5 cm buggy: a 3.3 m dune buggy at 1:18, smaller than the road cars
     public const float CarHalfWidth = 0.115f * CarScale;
     public const float CarHalfLength = 0.192f * CarScale;
     public const float CoinScale = 0.72f;

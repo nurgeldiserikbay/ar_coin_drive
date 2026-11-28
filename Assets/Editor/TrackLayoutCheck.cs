@@ -26,7 +26,7 @@ public static class TrackLayoutCheck
                 ok &= fits;
                 var stunts = "";
                 foreach (var stunt in track.Stunts) stunts += " " + stunt.Kind + "@" + (stunt.Index / (float)track.CenterLine.Count).ToString("0.00");
-                Debug.Log($"TRACK_CHECK {layout} {size} (min {RaceTrack.MinSize(layout)}): road {track.RoadHalfWidth * 200f:0} cm, lap {track.Length:0.00} m, "
+                Debug.Log($"TRACK_CHECK {layout} {size} (min {RaceTrack.MinSize(layout)}): road {track.RoadHalfWidth * 200f:0} cm, lap {track.Length:0.00} m, tightest r {track.MinTurnRadius() * 100f:0} cm, "
                           + $"closest {gap * 100f:0} cm, needs {needed * 100f:0} cm {(fits ? "OK" : "OVERLAP")}, stunts:{stunts}");
             }
         }

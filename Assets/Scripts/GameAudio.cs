@@ -100,10 +100,16 @@ public sealed class GameAudio : MonoBehaviour
         public void Update(float speedRatio, float throttle, float steer, float dt, bool active)
         {
             if (_motor == null) return;
-            var target = active ? Mathf.Clamp01(Mathf.Abs(speedRatio) * 0.85f + Mathf.Abs(throttle) * 0.25f) : 0f;
-            _rev = Mathf.Lerp(_rev, target, 1f - Mathf.Exp(-9f * dt));
+            // The note follows the wheels: pitch comes from road speed, throttle only adds a little load,
+            // so the motor never sounds faster than the car moves.
+            var speed = Mathf.Clamp01(Mathf.Abs(speedRatio));
+            var load = Mathf.Abs(throttle) * (1f - speed);
+            var target = active ? Mathf.Clamp01(speed * 0.92f + load * 0.12f) : 0f;
+            // Revs rise as fast as an electric motor spins up and fall a little slower.
+            var rate = target > _rev ? 14f : 7f;
+            _rev = Mathf.Lerp(_rev, target, 1f - Mathf.Exp(-rate * dt));
             var master = GameSettings.MasterVolume;
-            _motor.pitch = 0.55f + _rev * 1.55f;
+            _motor.pitch = 0.62f + _rev * 1.15f + Mathf.Max(0f, Mathf.Abs(speedRatio) - 1f) * 0.35f;
             _motor.volume = active ? (0.10f + _rev * 0.55f) * GameSettings.EngineVolume * master : 0f;
             if (_tyres == null) return;
             var scrub = Mathf.Clamp01(Mathf.Abs(speedRatio)) * (0.25f + Mathf.Abs(steer) * 0.75f);

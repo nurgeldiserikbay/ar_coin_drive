@@ -43,7 +43,8 @@ public sealed class GaragePreview
         _camera = cameraObject.AddComponent<Camera>();
         _camera.cullingMask = 1 << Layer;
         _camera.clearFlags = CameraClearFlags.SolidColor;
-        _camera.backgroundColor = new Color(0.05f, 0.06f, 0.08f, 1f);
+        // Transparent: the car and podium sit straight on the menu backdrop, with no box around them.
+        _camera.backgroundColor = new Color(0f, 0f, 0f, 0f);
         _camera.fieldOfView = 26f;
         _camera.nearClipPlane = 0.05f;
         _camera.farClipPlane = 5f;
@@ -64,7 +65,7 @@ public sealed class GaragePreview
         if (_texture == null || _texture.width != width || _texture.height != height)
         {
             if (_texture != null) _texture.Release();
-            _texture = new RenderTexture(width, height, 24) { antiAliasing = 2, name = "Garage Preview" };
+            _texture = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32) { antiAliasing = 2, name = "Garage Preview" };
             _camera.targetTexture = _texture;
         }
 

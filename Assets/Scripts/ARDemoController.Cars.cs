@@ -70,7 +70,7 @@ public sealed partial class ARDemoController
     private const float RaceFinishGrace = 15f;
 
     // Driving feel: the car accelerates, brakes and only turns while rolling, like an RC car.
-    private const float MaxSpeed = 0.60f;
+    private const float MaxSpeed = 0.78f;
     private const float ReverseInput = -0.65f;
     private const float Acceleration = 0.9f;
     private const float Braking = 2.2f;
@@ -79,15 +79,17 @@ public sealed partial class ARDemoController
     private const float FullSteerSpeed = 0.16f;
 
     // Free drive: the car is quicker than on the track and roams the room.
-    private const float FreeSpeedMultiplier = 1.5f;
+    private const float FreeSpeedMultiplier = 1.25f;
+    // Battle rings are small: a little slower than on the track keeps the shoving readable.
+    private const float BattleSpeedMultiplier = 0.85f;
     private const int FreeCoinCount = 8;
 
     // Push-out battle: last car in the shrinking ring scores; first to three wins.
     private const int BattleWinsNeeded = 3;
     // Battle damage: HP lost per m/s of closing speed in a clean nose-into-side hit.
     private const float MaxHealth = 100f;
-    private const float DamagePerSpeed = 48f;
-    private const float MinImpactSpeed = 0.12f;
+    private const float DamagePerSpeed = 44f;
+    private const float MinImpactSpeed = 0.14f;
     private ArenaShape _arenaShape;
     private int _arenaSize = 1;
     private float BattleStartRadius => BattleArena.SizeRadius[_arenaSize];
@@ -108,7 +110,7 @@ public sealed partial class ARDemoController
     private int _lastCountdownBeep;
 
     private bool IsSimulating => !IsClient;
-    private float SpeedScale => _mode == GameMode.Free ? FreeSpeedMultiplier : 1f;
+    private float SpeedScale => _mode == GameMode.Free ? FreeSpeedMultiplier : _mode == GameMode.Battle ? BattleSpeedMultiplier : 1f;
 
     // ------------------------------------------------------------------ rounds
 
@@ -119,6 +121,7 @@ public sealed partial class ARDemoController
         _roundRoot = new GameObject("Round").transform;
         _roundRoot.SetParent(_arena, false);
         UpdateBounds();
+        UpdatePlayMat();
         _raceTime = 0f;
         _goFlashUntil = 0f;
         _knockoutUntil = 0f;
@@ -780,7 +783,11 @@ public sealed partial class ARDemoController
         else if (Mathf.Abs(car.Speed) > 0.01f && Mathf.Sign(targetSpeed) != Mathf.Sign(car.Speed))
             rate = Braking;
         else
-            rate = spec.Acceleration * Mathf.Max(1f, speedMultiplier * 0.8f);
+        {
+            // Electric-motor pull: hardest off the line, tapering towards top speed.
+            var pace = Mathf.Clamp01(Mathf.Abs(car.Speed) / Mathf.Max(0.01f, topSpeed));
+            rate = spec.Acceleration * Mathf.Max(1f, speedMultiplier * 0.8f) * Mathf.Lerp(1.45f, 0.55f, pace);
+        }
         car.Speed = Mathf.MoveTowards(car.Speed, targetSpeed, rate * dt);
 
         if (Mathf.Abs(car.Speed) < 0.0005f && Mathf.Abs(targetSpeed) < 0.001f && Mathf.Abs(car.Lateral) < 0.0005f)

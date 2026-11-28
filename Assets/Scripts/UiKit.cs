@@ -31,6 +31,9 @@ public sealed class UiKit
     private Texture2D _circle;
     private int _roundedRadius = -1;
     private GUIStyle _box;
+    private GUIStyle _shadedBox;   // rounded, lighter at the top: buttons and panels
+    private GUIStyle _ringBox;     // rounded outline
+    private Texture2D _backdrop;
     private readonly Dictionary<int, GUIStyle> _labels = new Dictionary<int, GUIStyle>();
     private Font _font;
     private Font _fontBold;
@@ -233,11 +236,17 @@ public sealed class UiKit
 
         var pressed = IsPressed(rect);
         if (pressed) rect = Shrink(rect, 0.04f);
-        if (look != Look.Ghost) DrawShadow(rect);
-        DrawRounded(rect, Tint(look, selected, pressed));
-        if (look != Look.Ghost) DrawHighlight(rect);
-        if (look == Look.Ghost || selected)
-            DrawOutline(rect, selected ? AccentColor : new Color(1f, 1f, 1f, 0.25f));
+        if (look != Look.Ghost)
+        {
+            DrawShadow(rect);
+            DrawShaded(rect, Tint(look, selected, pressed));
+            DrawRing(rect, new Color(1f, 1f, 1f, selected ? 0.30f : 0.10f));
+        }
+        else
+        {
+            DrawRounded(rect, Tint(look, selected, pressed));
+            DrawRing(rect, selected ? AccentColor : new Color(1f, 1f, 1f, 0.16f));
+        }
         DrawContent(rect, label, fontSize, icon);
         return false;
     }
@@ -312,7 +321,8 @@ public sealed class UiKit
         Block(rect);
         if (!Drawing) return;
         DrawShadow(rect);
-        DrawRounded(rect, color ?? PanelColor);
+        DrawShaded(rect, color ?? PanelColor);
+        DrawRing(rect, new Color(1f, 1f, 1f, 0.07f));
     }
 
     /// <summary>A rounded filled shape that, unlike Panel, does not swallow taps (decoration on buttons).</summary>
@@ -320,6 +330,13 @@ public sealed class UiKit
     {
         if (!Drawing) return;
         DrawRounded(rect, color);
+    }
+
+    /// <summary>Like RoundedFill, with the soft vertical shade buttons use.</summary>
+    public void ShadedFill(Rect rect, Color color)
+    {
+        if (!Drawing) return;
+        DrawShaded(rect, color);
     }
 
     public void Icon(Rect rect, UiIcon icon, Color color)
@@ -465,13 +482,6 @@ public sealed class UiKit
         DrawRounded(new Rect(rect.x, rect.y + U(3f), rect.width, rect.height), new Color(0f, 0f, 0f, 0.28f));
     }
 
-    /// <summary>Soft light band across the top for a slightly raised look.</summary>
-    private void DrawHighlight(Rect rect)
-    {
-        var top = new Rect(rect.x + U(3f), rect.y + U(2f), rect.width - U(6f), rect.height * 0.45f);
-        if (top.height >= _roundedRadius * 2f) DrawRounded(top, new Color(1f, 1f, 1f, 0.06f));
-    }
-
     /// <summary>Icon and/or label centred in a control.</summary>
     private void DrawContent(Rect rect, string label, int fontSize, UiIcon icon)
     {
@@ -511,6 +521,40 @@ public sealed class UiKit
         GUI.color = previous;
     }
 
+    /// <summary>Rounded box with a soft vertical gradient (light top, darker bottom) in the given tint.</summary>
+    private void DrawShaded(Rect rect, Color color)
+    {
+        if (rect.height < _roundedRadius * 2f) { DrawRounded(rect, color); return; }
+        var previous = GUI.color;
+        GUI.color = A(color);
+        GUI.Box(rect, GUIContent.none, _shadedBox);
+        GUI.color = previous;
+    }
+
+    /// <summary>Thin rounded outline around a box.</summary>
+    private void DrawRing(Rect rect, Color color)
+    {
+        if (rect.height < _roundedRadius * 2f) return;
+        var previous = GUI.color;
+        GUI.color = A(color);
+        GUI.Box(rect, GUIContent.none, _ringBox);
+        GUI.color = previous;
+    }
+
+    /// <summary>
+    /// Full-screen backdrop for menu screens: deep navy-to-violet gradient, an orange glow top
+    /// right, a blue glow bottom left and faint diagonal speed lines.
+    /// </summary>
+    public void Backdrop(Rect rect, float alpha = 1f)
+    {
+        if (!Drawing) return;
+        if (_backdrop == null) _backdrop = BackdropTexture(360, 640);
+        var previous = GUI.color;
+        GUI.color = new Color(1f, 1f, 1f, alpha * _alpha);
+        GUI.DrawTexture(rect, _backdrop, ScaleMode.StretchToFill, true);
+        GUI.color = previous;
+    }
+
     private void DrawOutline(Rect rect, Color color)
     {
         // A slightly larger rounded box behind would need a second pass; a bottom bar reads well.
@@ -536,6 +580,16 @@ public sealed class UiKit
             _box = new GUIStyle
             {
                 normal = { background = _rounded },
+                border = new RectOffset(radius, radius, radius, radius)
+            };
+            _shadedBox = new GUIStyle
+            {
+                normal = { background = ShadedTexture(radius) },
+                border = new RectOffset(radius, radius, radius, radius)
+            };
+            _ringBox = new GUIStyle
+            {
+                normal = { background = RingTexture(radius, Mathf.Max(1f, Scale * 1.2f)) },
                 border = new RectOffset(radius, radius, radius, radius)
             };
         }
@@ -583,6 +637,90 @@ public sealed class UiKit
                 var distance = new Vector2(x + 0.5f - cx, y + 0.5f - cy).magnitude;
                 var alpha = Mathf.Clamp01(radius - distance + 0.5f);
                 pixels[y * size + x] = new Color32(255, 255, 255, (byte)(alpha * 255f));
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(false, true);
+        return texture;
+    }
+
+    /// <summary>9-sliced rounded box whose rows fade from full brightness at the top to 78% at the bottom.</summary>
+    private static Texture2D ShadedTexture(int radius)
+    {
+        var width = radius * 2 + 2;
+        const int height = 96;
+        var texture = new Texture2D(width, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        var pixels = new Color32[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            // Texture rows run bottom-up; IMGUI draws row 0 at the bottom of the box.
+            var shade = Mathf.Lerp(0.78f, 1f, Mathf.SmoothStep(0f, 1f, y / (height - 1f)));
+            var value = (byte)(shade * 255f);
+            for (var x = 0; x < width; x++)
+            {
+                var cx = Mathf.Clamp(x + 0.5f, radius, width - radius);
+                var cy = Mathf.Clamp(y + 0.5f, radius, height - radius);
+                var distance = new Vector2(x + 0.5f - cx, y + 0.5f - cy).magnitude;
+                var alpha = Mathf.Clamp01(radius - distance + 0.5f);
+                pixels[y * width + x] = new Color32(value, value, value, (byte)(alpha * 255f));
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(false, true);
+        return texture;
+    }
+
+    /// <summary>9-sliced rounded outline, thickness in pixels.</summary>
+    private static Texture2D RingTexture(int radius, float thickness)
+    {
+        var size = radius * 2 + 2;
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        var pixels = new Color32[size * size];
+        for (var y = 0; y < size; y++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var cx = Mathf.Clamp(x + 0.5f, radius, size - radius);
+                var cy = Mathf.Clamp(y + 0.5f, radius, size - radius);
+                var distance = new Vector2(x + 0.5f - cx, y + 0.5f - cy).magnitude;
+                // Edge pixels (outside the inner square) measure from the rounded edge.
+                var edge = radius - distance;
+                var alpha = Mathf.Clamp01(edge + 0.5f) * Mathf.Clamp01(thickness - edge + 0.5f);
+                pixels[y * size + x] = new Color32(255, 255, 255, (byte)(alpha * 255f));
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(false, true);
+        return texture;
+    }
+
+    private static Texture2D BackdropTexture(int width, int height)
+    {
+        var texture = new Texture2D(width, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        var pixels = new Color32[width * height];
+        var top = new Color(0.08f, 0.09f, 0.19f);
+        var bottom = new Color(0.02f, 0.02f, 0.05f);
+        var orange = new Color(1.00f, 0.45f, 0.08f);
+        var blue = new Color(0.10f, 0.42f, 0.95f);
+        for (var y = 0; y < height; y++)
+        {
+            var v = y / (height - 1f); // 0 bottom, 1 top
+            for (var x = 0; x < width; x++)
+            {
+                var u = x / (width - 1f);
+                var color = Color.Lerp(bottom, top, Mathf.SmoothStep(0f, 1f, v));
+                var aspect = width / (float)height;
+                var glowA = Mathf.Exp(-new Vector2((u - 0.95f) * aspect, v - 0.98f).sqrMagnitude / 0.10f);
+                var glowB = Mathf.Exp(-new Vector2((u - 0.05f) * aspect, v - 0.05f).sqrMagnitude / 0.14f);
+                color += orange * (0.30f * glowA) + blue * (0.18f * glowB);
+                // Faint diagonal speed lines.
+                var stripe = Mathf.Repeat(x * 0.5f + y, 22f);
+                if (stripe < 1.4f) color += new Color(1f, 1f, 1f) * 0.018f;
+                pixels[y * width + x] = new Color32((byte)(Mathf.Clamp01(color.r) * 255f), (byte)(Mathf.Clamp01(color.g) * 255f),
+                    (byte)(Mathf.Clamp01(color.b) * 255f), 255);
             }
         }
 

@@ -124,7 +124,7 @@ public sealed partial class RaceTrack
         Layout = layout;
         Size = size;
         // Smooth closed curve through the layout's control points, normalised to the size.
-        var raw = DenseCurve(ControlPoints(layout), 2000);
+        var raw = Smooth(DenseCurve(ControlPoints(layout), 2000), SmoothRadiusFor(layout), SmoothPasses);
         var max = 0f;
         foreach (var p in raw) max = Mathf.Max(max, Mathf.Max(Mathf.Abs(p.x), Mathf.Abs(p.y)));
 
@@ -176,6 +176,7 @@ public sealed partial class RaceTrack
         }
 
         BarriersClear = ClosestApproach() >= 2f * (RailOffset + TubeRadius) + MinBarrierGap;
+        StartOnStraight();
         PlaceStunts();
 
         var extent = SizeHalfExtent[(int)size];
@@ -239,8 +240,10 @@ public sealed partial class RaceTrack
                 // Rounded triangle: three long straights and three tight corners.
                 return new[]
                 {
-                    new Vector2(-0.92f, -0.86f), new Vector2(0f, -0.90f), new Vector2(0.92f, -0.86f),
-                    new Vector2(0.48f, 0.06f), new Vector2(0.02f, 0.94f), new Vector2(-0.46f, 0.06f)
+                    // Each corner is two points cut back along its edges, so it rounds into an arc.
+                    new Vector2(-0.818f, -0.665f), new Vector2(-0.70f, -0.86f), new Vector2(0f, -0.90f), new Vector2(0.70f, -0.86f),
+                    new Vector2(0.822f, -0.663f), new Vector2(0.48f, 0.06f), new Vector2(0.118f, 0.743f), new Vector2(-0.082f, 0.745f),
+                    new Vector2(-0.46f, 0.06f)
                 };
             case TrackLayout.Chicane:
                 // Oval with a chicane in the middle of both straights.
@@ -263,6 +266,75 @@ public sealed partial class RaceTrack
                 return points;
             }
         }
+    }
+
+    // Corner rounding of the dense curve: a box filter of +-radius samples (of 2000 per lap, evenly
+    // spaced), run SmoothPasses times (close to a Gaussian). It turns kinks between close control
+    // points into even arcs and leaves straights straight.
+    private static int SmoothRadiusFor(TrackLayout layout)
+    {
+        switch (layout)
+        {
+            case TrackLayout.Hairpin: return 30;  // more would pinch the hairpins themselves
+            case TrackLayout.Stadium: return 60;  // keeps straights long enough for the ramps
+            default: return 100;
+        }
+    }
+
+    private const int SmoothPasses = 3;
+
+    private static List<Vector2> Smooth(List<Vector2> curve, int radius, int passes)
+    {
+        var n = curve.Count;
+        var current = EvenSpacing(curve, n);
+        var next = new Vector2[n];
+        var window = radius * 2 + 1;
+        for (var pass = 0; pass < passes; pass++)
+        {
+            // Running sum around the closed loop.
+            var sum = Vector2.zero;
+            for (var k = -radius; k <= radius; k++) sum += current[(k + n) % n];
+            for (var i = 0; i < n; i++)
+            {
+                next[i] = sum / window;
+                sum += current[(i + radius + 1) % n] - current[(i - radius + n) % n];
+            }
+
+            var swap = current;
+            current = next;
+            next = swap;
+        }
+
+        return new List<Vector2>(current);
+    }
+
+    /// <summary>The closed curve resampled at equal distances (the filter then works in metres, not samples).</summary>
+    private static Vector2[] EvenSpacing(List<Vector2> curve, int count)
+    {
+        var n = curve.Count;
+        var total = 0f;
+        for (var i = 0; i < n; i++) total += (curve[(i + 1) % n] - curve[i]).magnitude;
+        var result = new Vector2[count];
+        var step = total / count;
+        var travelled = 0f;
+        var target = 0f;
+        var k = 0;
+        for (var i = 0; i < n && k < count; i++)
+        {
+            var a = curve[i];
+            var b = curve[(i + 1) % n];
+            var segment = (b - a).magnitude;
+            while (target <= travelled + segment && k < count)
+            {
+                result[k++] = Vector2.Lerp(a, b, segment > 0f ? (target - travelled) / segment : 0f);
+                target += step;
+            }
+
+            travelled += segment;
+        }
+
+        for (; k < count; k++) result[k] = result[k - 1];
+        return result;
     }
 
     private static List<Vector2> DenseCurve(Vector2[] points, int samples)
@@ -351,6 +423,61 @@ public sealed partial class RaceTrack
             if (distance >= bestDistance) continue;
             bestDistance = distance;
             best = i;
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Moves the start line (sample 0) to the straightest stretch of the lap: the grid behind it
+    /// and the run to the first corner ahead of it are straight, like on a real circuit.
+    /// </summary>
+    private void StartOnStraight()
+    {
+        var step = Length / _count;
+        var back = Mathf.RoundToInt(0.55f / step);   // grid rows behind the line
+        var ahead = Mathf.RoundToInt(0.45f / step);  // gantry and the run to turn one
+        var turn = new float[_count];
+        for (var i = 0; i < _count; i++)
+            turn[i] = Mathf.Abs(Vector2.SignedAngle(_tangent[i], _tangent[(i + 1) % _count]));
+
+        var best = 0;
+        var bestCost = float.MaxValue;
+        for (var i = 0; i < _count; i++)
+        {
+            var cost = 0f;
+            for (var k = -back; k < ahead; k++) cost += turn[(i + k + _count) % _count];
+            if (cost >= bestCost) continue;
+            bestCost = cost;
+            best = i;
+        }
+
+        if (best == 0) return;
+        Rotate(_center, best);
+        Rotate(_tangent, best);
+        Rotate(_outward, best);
+    }
+
+    private static void Rotate(Vector2[] values, int start)
+    {
+        var copy = (Vector2[])values.Clone();
+        for (var i = 0; i < values.Length; i++) values[i] = copy[(i + start) % values.Length];
+    }
+
+    /// <summary>Tightest corner of the centre line: radius in metres over a 20 cm chord (layout check).</summary>
+    public float MinTurnRadius()
+    {
+        var span = Mathf.Max(1, Mathf.RoundToInt(0.10f / (Length / _count)));
+        var best = float.MaxValue;
+        for (var i = 0; i < _count; i++)
+        {
+            var a = _center[(i - span + _count) % _count];
+            var b = _center[i];
+            var c = _center[(i + span) % _count];
+            // Circumradius of the triangle a-b-c.
+            var cross = Mathf.Abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+            if (cross < 1e-7f) continue;
+            best = Mathf.Min(best, (b - a).magnitude * (c - b).magnitude * (c - a).magnitude / (2f * cross));
         }
 
         return best;

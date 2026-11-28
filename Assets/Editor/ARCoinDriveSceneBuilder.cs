@@ -126,7 +126,9 @@ public static class ARCoinDriveSceneBuilder
         cameraObject.AddComponent<ARCameraManager>();
         cameraObject.AddComponent<ARCameraBackground>();
         var occlusion = cameraObject.AddComponent<AROcclusionManager>();
-        occlusion.requestedEnvironmentDepthMode = EnvironmentDepthMode.Fastest;
+        // Medium depth with temporal smoothing: steadier occlusion edges and fewer phantom obstacles.
+        occlusion.requestedEnvironmentDepthMode = EnvironmentDepthMode.Medium;
+        occlusion.environmentDepthTemporalSmoothingRequested = true;
         occlusion.requestedOcclusionPreferenceMode = OcclusionPreferenceMode.PreferEnvironmentOcclusion;
         cameraObject.AddComponent<ARDepthObstacleDetector>();
 

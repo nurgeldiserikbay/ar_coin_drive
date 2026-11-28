@@ -269,7 +269,6 @@ public static partial class VirtualHouse
 
         CreateRenderer(parent, "Walls", structure, materials, false);
         CreateOverlay(parent, overlay);
-        CreateMat(parent, RoomCenter(4), new Vector2(1.5f, 1.25f), ProceduralCarFactory.GetMaterial(new Color(0.85f, 0.85f, 0.85f), 0.04f, 0f, ProceduralTextures.Rug, 1f));
         CreateMat(parent, RoomCenter(8) + new Vector2(-0.3f, -0.3f), new Vector2(1.7f, 1.7f), ProceduralCarFactory.GetMaterial(Color.white, 0.04f, 0f, ProceduralTextures.KidsCarpet, 1f));
         return info;
     }
@@ -623,6 +622,22 @@ public static partial class VirtualHouse
         Built.Add(mesh);
         Built.Add(renderer.sharedMaterial);
         renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+    }
+
+    /// <summary>
+    /// The mat the race track or battle ring sits on, sized by the caller (transform scale = half size):
+    /// a rug in the house, a black rubber mat in the workshop, none on the backyard lawn.
+    /// </summary>
+    public static GameObject CreatePlayMat(Transform parent, GameLocation location)
+    {
+        if (location == GameLocation.Backyard) return null;
+        var material = location == GameLocation.Workshop
+            ? ProceduralCarFactory.GetMaterial(new Color(0.20f, 0.21f, 0.23f), 0.12f, 0f, ProceduralTextures.Carpet, 1f)
+            : ProceduralCarFactory.GetMaterial(new Color(0.85f, 0.85f, 0.85f), 0.04f, 0f, ProceduralTextures.Rug, 1f);
+        var holder = new GameObject("Play Mat").transform;
+        holder.SetParent(parent, false);
+        CreateMat(holder, Vector2.zero, Vector2.one, material);
+        return holder.gameObject;
     }
 
     /// <summary>Rug or play mat with its own 0..1 texture mapping (no collision).</summary>
