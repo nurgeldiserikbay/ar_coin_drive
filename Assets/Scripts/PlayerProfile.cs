@@ -24,10 +24,12 @@ public static class PlayerProfile
     public const int StripeCost = 150;
 
     // Rewards.
-    private static readonly int[] RacePlaceReward = { 300, 180, 110, 70 };
-    private static readonly int[] BattlePlaceReward = { 280, 150, 90, 60 };
-    public const int CoinPickupFree = 5;
-    public const int CoinPickupRound = 2;
+    // Prizes are scaled by the rival level (GameSettings.DifficultyPrize). Coins are slow to earn on
+    // purpose: rewarded ads (AdRewards) are the quick way to upgrades and repairs.
+    private static readonly int[] RacePlaceReward = { 120, 70, 40, 25 };
+    private static readonly int[] BattlePlaceReward = { 110, 60, 35, 20 };
+    public const int CoinPickupFree = 1;
+    public const int CoinPickupRound = 1;
 
     private static bool _loaded;
     private static int _coins;
@@ -35,6 +37,7 @@ public static class PlayerProfile
     private static CarTune[] _tunes;
     private static CarLook[] _looks;
     private static int[] _unlocked; // per car: bought cosmetic options (bit flags)
+    private static int[] _wear;     // per car: 0 = like new, 100 = worn out (see Condition)
 
     public static event System.Action Changed;
 
@@ -67,7 +70,7 @@ public static class PlayerProfile
     public static CarLook Look(int car) { Load(); return _looks[Clamp(car)]; }
 
     /// <summary>The car's stats with its upgrades.</summary>
-    public static CarSpec Spec(int car) => CarTuning.Apply(Clamp(car), Tune(car));
+    public static CarSpec Spec(int car) => CarTuning.Worn(CarTuning.Apply(Clamp(car), Tune(car)), Condition(car));
 
     public static bool TryBuyCar(int car)
     {
@@ -165,6 +168,43 @@ public static class PlayerProfile
         Save();
     }
 
+    // ------------------------------------------------------------------ condition and repair
+
+    /// <summary>0..100 %: crashes, battle hits and races wear a car down; a worn car is slower.</summary>
+    public static int Condition(int car) { Load(); return 100 - _wear[Clamp(car)]; }
+
+    /// <summary>Adds wear (percentage points) to a car after a round.</summary>
+    public static void AddWear(int car, float points)
+    {
+        if (points < 0.5f) return;
+        Load();
+        car = Clamp(car);
+        _wear[car] = Mathf.Clamp(_wear[car] + Mathf.RoundToInt(points), 0, 100);
+        Save();
+    }
+
+    /// <summary>Full repair price: dearer cars cost more to fix.</summary>
+    public static int RepairCost(int car)
+    {
+        Load();
+        car = Clamp(car);
+        if (_wear[car] <= 0) return 0;
+        var value = IsPremium(car) ? 6000 : CarPrice(car);
+        var perPoint = 1.5f + value / 2000f;
+        return Mathf.Max(5, Mathf.CeilToInt(_wear[car] * perPoint / 5f) * 5);
+    }
+
+    public static bool TryRepair(int car)
+    {
+        Load();
+        car = Clamp(car);
+        var cost = RepairCost(car);
+        if (cost <= 0 || !Spend(cost)) return false;
+        _wear[car] = 0;
+        Save();
+        return true;
+    }
+
     // ------------------------------------------------------------------ rewards
 
     public static int RaceReward(int place, int cars) => PlaceReward(RacePlaceReward, place, cars);
@@ -175,7 +215,7 @@ public static class PlayerProfile
         if (place <= 0) return 0;
         // Last place always gets the smallest prize, so a 2-car race pays 1st or 4th-tier money.
         var index = place >= cars ? table.Length - 1 : Mathf.Min(place - 1, table.Length - 1);
-        return table[index];
+        return Mathf.RoundToInt(table[index] * GameSettings.DifficultyPrize[GameSettings.Difficulty] / 5f) * 5;
     }
 
     /// <summary>Adds a reward (doubled with the VIP pass); returns what was actually added.</summary>
@@ -209,7 +249,13 @@ public static class PlayerProfile
         (tune.Engine & 3) | (tune.Tyres & 3) << 2 | (tune.Weight & 3) << 4 | (look.Finish & 3) << 6
         | (look.Rim & 3) << 8 | (look.Spoiler & 3) << 10 | (look.Stripes ? 1 : 0) << 12;
 
-    public static int BuildOf(int car) => PackBuild(Tune(car), Look(car));
+    public static int BuildOf(int car) => PackBuild(Tune(car), Look(car)) | WearLevel(car) << 13;
+
+    // Wear in 3 bits (0 = like new) above the 13 build bits: the build travels as 16 bits over LAN.
+    private static int WearLevel(int car) { Load(); return Mathf.RoundToInt(_wear[Clamp(car)] * 7f / 100f); }
+
+    /// <summary>Condition 0..100 carried in a build code (100 when it has no wear bits).</summary>
+    public static int ConditionOf(int build) => 100 - Mathf.RoundToInt((build >> 13 & 7) * 100f / 7f);
 
     public static void UnpackBuild(int code, int paint, out CarTune tune, out CarLook look)
     {
@@ -241,6 +287,7 @@ public static class PlayerProfile
         _tunes = new CarTune[count];
         _looks = new CarLook[count];
         _unlocked = new int[count];
+        _wear = new int[count];
         for (var i = 0; i < count; i++) _looks[i] = CarLook.Stock(CarCatalog.Get(i).DefaultColor);
         _coins = StartingCoins;
         _owned = 0;
@@ -270,6 +317,7 @@ public static class PlayerProfile
             int.TryParse(f[3], out var unlocked);
             UnpackBuild(code, Mathf.Clamp(paint, 0, GameSettings.CarColors.Length - 1), out _tunes[car], out _looks[car]);
             _unlocked[car] = unlocked;
+            if (f.Length > 4 && int.TryParse(f[4], out var wear)) _wear[car] = Mathf.Clamp(wear, 0, 100);
         }
 
         return true;
@@ -283,7 +331,7 @@ public static class PlayerProfile
         {
             // Trailing fields are reserved for later options.
             builder.Append(';').Append(i).Append(',').Append(PackBuild(_tunes[i], _looks[i])).Append(',')
-                .Append(_looks[i].Paint).Append(',').Append(_unlocked[i]).Append(",0,0,0,0,0");
+                .Append(_looks[i].Paint).Append(',').Append(_unlocked[i]).Append(',').Append(_wear[i]).Append(",0,0,0,0");
         }
 
         var body = builder.ToString();

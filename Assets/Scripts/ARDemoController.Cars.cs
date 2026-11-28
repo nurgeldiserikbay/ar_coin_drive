@@ -79,6 +79,12 @@ public sealed partial class ARDemoController
     private const float FullSteerSpeed = 0.16f;
 
     // Free drive: the car is quicker than on the track and roams the room.
+    // CPU rivals by level (catalogue indices): easy = slow stock cars, hard = the fast ones, tuned.
+    private static readonly int[][] BotCars = { new[] { 0, 5, 4, 1 }, new[] { 1, 4, 2, 0, 5, 3 }, new[] { 3, 2, 1, 4 } };
+    private static readonly int[] BotTuneLevel = { 0, 1, 2 };
+    // How hard the computer drives at each level (share of its car's pace).
+    private static readonly float[] BotPace = { 0.90f, 0.95f, 0.99f };
+
     private const float FreeSpeedMultiplier = 1.25f;
     // Battle rings are small: a little slower than on the track keeps the shoving readable.
     private const float BattleSpeedMultiplier = 0.85f;
@@ -131,6 +137,7 @@ public sealed partial class ARDemoController
         _hint = null;
         _roundEarned = 0;
         _placePrize = 0;
+        CommitWear(); // a round left early still wears the car
         _coinsRewarded = 0;
         _prizeGiven = false;
         _adBonus = 0;
@@ -192,6 +199,7 @@ public sealed partial class ARDemoController
         var used = new HashSet<int>();
         var playerBuild = PlayerProfile.BuildOf(GameSettings.CarType);
         _player = AddCar(0, GameSettings.PlayerName, GameSettings.CarColor, GameSettings.CarType, playerBuild, true, false);
+        _wearCarIndex = GameSettings.CarType;
         used.Add(_player.ColorIndex);
 
         if (IsHost)
@@ -207,15 +215,17 @@ public sealed partial class ARDemoController
         if (_mode == GameMode.Free) return;
         var bots = Mathf.Min(GameSettings.Bots, LanSession.MaxPlayers - _cars.Count);
         if (_cars.Count == 1) bots = Mathf.Max(bots, 1); // racing alone is no race
+        // Rivals come from the chosen level, not from the player's car: a better car wins more.
+        var level = GameSettings.Difficulty;
+        var pool = BotCars[level];
+        var first = Random.Range(0, pool.Length);
         for (var i = 0; i < bots; i++)
         {
             var color = FreeColor(used);
             used.Add(color);
-            // Computer drivers get a mix of the other cars.
-            var spec = (GameSettings.CarType + 1 + i * 2) % CarCatalog.All.Length;
-            if (PlayerProfile.IsPremium(spec)) spec = (spec + 2) % 6; // bots stick to the regular cars
-            // ...tuned like the player's car (stock looks), so upgrades never make races a walkover.
-            PlayerProfile.UnpackBuild(playerBuild, color, out var tune, out _);
+            var spec = pool[(first + i) % pool.Length];
+            var stage = BotTuneLevel[level] + (level == 2 && i % 2 == 1 ? 1 : 0);
+            var tune = new CarTune { Engine = stage, Tyres = stage, Weight = Mathf.Max(0, stage - 1) };
             var botLook = CarLook.Stock(color);
             botLook.Rim = (i + 1) % CarLook.RimNames.Length;
             AddCar(4 + i, "CPU " + (i + 1), color, spec, PlayerProfile.PackBuild(tune, botLook), false, true);
@@ -233,7 +243,7 @@ public sealed partial class ARDemoController
     {
         specIndex = Mathf.Clamp(specIndex, 0, CarCatalog.All.Length - 1);
         PlayerProfile.UnpackBuild(build, colorIndex, out var tune, out var look);
-        var spec = CarTuning.Apply(specIndex, tune);
+        var spec = CarTuning.Worn(CarTuning.Apply(specIndex, tune), PlayerProfile.ConditionOf(build));
         var car = new Car { Id = id, Name = name, ColorIndex = colorIndex, IsLocal = local, IsBot = bot, Spec = spec, SpecIndex = specIndex, Build = build };
         car.Root = ProceduralCarFactory.CreateCar(_roundRoot, spec, GameSettings.CarColors[colorIndex], GameSettings.TrimFor(colorIndex), look).transform;
         car.Rig = car.Root.GetComponent<ProceduralCarRig>();
@@ -685,8 +695,10 @@ public sealed partial class ARDemoController
         foreach (var other in _cars)
             if (!other.IsBot) leadingHuman = Mathf.Max(leadingHuman, other.Laps);
         var gap = car.Laps - leadingHuman;
-        var skill = 0.94f + (car.Id % 3) * 0.03f;
-        skill *= gap > 0.15f ? 0.9f : gap < -0.08f ? 1.12f : 1f;
+        // The car decides the race: rivals never get a speed-up when behind, and only ease off a
+        // little when far ahead so the race stays in sight.
+        var skill = BotPace[GameSettings.Difficulty] + (car.Id % 3) * 0.015f;
+        if (gap > 0.35f) skill *= 0.94f;
         drive = car.Finished ? 0.4f : skill * (1f - 0.35f * Mathf.Abs(steer));
     }
 
@@ -825,6 +837,8 @@ public sealed partial class ARDemoController
         position += (CarCollision.Forward(heading) * car.Speed + CarCollision.Right(heading) * car.Lateral) * dt;
         if (onTrack && RaceTrack.Shared.ConstrainToRails(ref position, spec.HalfWidth))
         {
+            // Scraping the barrier fast wears the car (about 1.5 % per second).
+            if (car.IsLocal && Mathf.Abs(car.Speed) > 0.45f) _roundWear += 1.5f * dt;
             // Scrape along the barrier, but keep enough speed to steer back onto the road.
             var scrapeSpeed = Mathf.Sign(car.Speed) * Mathf.Min(Mathf.Abs(car.Speed), spec.TopSpeed * 0.4f);
             car.Speed = Mathf.MoveTowards(car.Speed, scrapeSpeed, 2.5f * dt);
@@ -980,6 +994,7 @@ public sealed partial class ARDemoController
         if (amount < 1f || car.Out || Time.time < car.HitCooldown) return 0f;
         amount = Mathf.Min(amount, car.Health);
         car.Health -= amount;
+        if (car.IsLocal) _roundWear += amount * 0.2f; // a full health bar of hits is 20 % wear
         car.HitCooldown = Time.time + 0.3f;
         if (car.Rig != null) car.Rig.Bump(Mathf.Clamp(amount / 30f, 0.2f, 1f));
         if (car.Health > 0.5f) return amount;
@@ -988,6 +1003,7 @@ public sealed partial class ARDemoController
         car.Out = true;
         car.Wreck = 0.0001f;
         car.Speed = 0f;
+        if (car.IsLocal) _roundWear += 5f;
         GameAudio.Instance.Play(GameAudio.Sfx.Knockout, car.IsLocal ? 1f : 0.7f);
         if (car.IsLocal) GameAudio.Haptic(160);
         ShowHint(car.IsLocal ? "WRECKED!" : car.Name + " is wrecked!");
@@ -1018,6 +1034,16 @@ public sealed partial class ARDemoController
     /// Pays garage coins: a few for every coin the player picks up, and a prize for the final
     /// place in a race or battle. Works the same on the host and on guests (it reads the synced state).
     /// </summary>
+    // Wear the player's car picked up this round (percentage points), saved at the end of the round.
+    private float _roundWear;
+    private int _wearCarIndex = -1;
+
+    private void CommitWear()
+    {
+        if (_wearCarIndex >= 0 && _roundWear > 0f && !IsClient) PlayerProfile.AddWear(_wearCarIndex, _roundWear);
+        _roundWear = 0f;
+    }
+
     private void UpdateRewards()
     {
         if (_player == null) return;
@@ -1032,6 +1058,8 @@ public sealed partial class ARDemoController
         _coinsRewarded = _player.Coins;
         if (_prizeGiven || _state != GameState.Finished || _mode == GameMode.Free || _player.Place <= 0) return;
         _prizeGiven = true;
+        _roundWear += 2f; // every finished race or battle wears the tyres a little
+        CommitWear();
         _placePrize = _mode == GameMode.Race ? PlayerProfile.RaceReward(_player.Place, _cars.Count) : PlayerProfile.BattleReward(_player.Place, _cars.Count);
         _placePrize = PlayerProfile.Reward(_placePrize);
         _roundEarned += _placePrize;

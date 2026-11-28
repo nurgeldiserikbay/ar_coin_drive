@@ -152,6 +152,7 @@ public sealed partial class ARDemoController : MonoBehaviour
     {
         // A full-screen ad also pauses the app; that must not open the pause menu.
         if (paused && _screen == UiScreen.Game && _arena != null && !IsOnline && !GameAds.Showing) OpenPause();
+        if (paused) CommitWear(); // the app may be closed from the background
     }
 
     private void OnDestroy()

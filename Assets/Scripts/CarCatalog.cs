@@ -166,4 +166,24 @@ public static class CarTuning
         Cache[key] = tuned;
         return tuned;
     }
+
+    /// <summary>
+    /// A worn car (condition below 100 %): up to 15 % less top speed, 22 % less acceleration, 15 % less
+    /// grip and 8 % less steering when completely worn out.
+    /// </summary>
+    public static CarSpec Worn(CarSpec spec, int condition)
+    {
+        if (condition >= 100) return spec;
+        var c = Mathf.Clamp01(condition / 100f);
+        return new CarSpec
+        {
+            Id = spec.Id, Name = spec.Name, Class = spec.Class, Body = spec.Body, DefaultColor = spec.DefaultColor,
+            TopSpeed = spec.TopSpeed * (0.85f + 0.15f * c),
+            Acceleration = spec.Acceleration * (0.78f + 0.22f * c),
+            TurnRate = spec.TurnRate * (0.92f + 0.08f * c),
+            Grip = spec.Grip * (0.85f + 0.15f * c),
+            Drift = spec.Drift, Mass = spec.Mass, OffRoad = spec.OffRoad, SizeFactor = spec.SizeFactor,
+            HalfWidth = spec.HalfWidth, HalfLength = spec.HalfLength
+        };
+    }
 }

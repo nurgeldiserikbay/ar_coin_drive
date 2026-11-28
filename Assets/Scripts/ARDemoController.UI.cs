@@ -158,7 +158,43 @@ public sealed partial class ARDemoController
         y += rowHeight + U(10f);
         _ui.Text(new Rect(column.x, y, column.width, U(20f)), GameSettings.PlayerName + "  •  " + GameSettings.CarColorNames[GameSettings.CarColor]
             + " " + CarCatalog.Get(GameSettings.CarType).Name, 12, TextAnchor.MiddleCenter, UiKit.TextDim);
-        CoinChip(new Rect(vipRect.x - U(138f), area.y, U(130f), U(36f)));
+        var carCondition = PlayerProfile.Condition(GameSettings.CarType);
+        if (carCondition < 50)
+            _ui.Text(new Rect(column.x, y + U(20f), column.width, U(20f)), "Your car is worn (" + carCondition + "%): repair it in the Garage", 12,
+                TextAnchor.MiddleCenter, new Color(1f, 0.55f, 0.45f), true);
+        var menuCoins = new Rect(vipRect.x - U(138f), area.y, U(130f), U(36f));
+        CoinChip(menuCoins);
+        FreeCoinsButton(new Rect(menuCoins.x - U(8f) - U(96f), area.y, U(96f), U(36f)));
+        if (_garageNote != null && Time.unscaledTime - _garageNoteAt < 3f)
+            _ui.Text(new Rect(area.x, area.y + U(40f), area.width, U(20f)), _garageNote, 12, TextAnchor.MiddleRight,
+                _garageNoteBad ? new Color(1f, 0.6f, 0.5f) : new Color(0.45f, 1f, 0.5f), true, true);
+    }
+
+    /// <summary>
+    /// Free coins for a rewarded ad: a green "+150" button; while it cools down (or after the daily
+    /// cap) a dim button with the wait. Hidden for VIP players and in LAN games.
+    /// </summary>
+    private void FreeCoinsButton(Rect rect)
+    {
+        if (PlayerProfile.Vip || IsOnline) return;
+        if (AdRewards.Allowed && GameAds.RewardedReady)
+        {
+            if (_ui.Button(rect, "+" + AdRewards.CoinReward, UiKit.Look.Go, false, 14, UiIcon.Play))
+                AdRewards.ShowForCoins(() =>
+                {
+                    GameAudio.Instance.Play(GameAudio.Sfx.Coin);
+                    GarageNote("+" + AdRewards.CoinReward + " coins. Thanks for watching!", false);
+                });
+            return;
+        }
+
+        var label = AdRewards.LimitReached ? "TOMORROW" : AdRewards.SecondsUntilNext > 0 ? AdRewards.WaitLabel : "+" + AdRewards.CoinReward;
+        if (_ui.Button(rect, label, UiKit.Look.Ghost, false, 12, UiIcon.Play))
+            GarageNote(AdRewards.LimitReached
+                ? "That was today's last ad reward. More tomorrow!"
+                : AdRewards.SecondsUntilNext > 0
+                    ? "Next ad reward in " + AdRewards.WaitLabel + ". Win races or collect coins meanwhile."
+                    : "The ad is still loading. Try again in a moment.", true);
     }
 
     /// <summary>The VIP pass offer, plus restoring purchases on a new phone.</summary>
@@ -270,7 +306,14 @@ public sealed partial class ARDemoController
         }
 
         var garageCoins = new Rect(area.xMax - U(110f) - U(8f) - U(112f), area.y, U(112f), U(36f));
-        _ui.TextFit(new Rect(area.x, area.y, garageCoins.x - area.x - U(8f), U(32f)), "GARAGE", 22, TextAnchor.MiddleLeft, Color.white, true);
+        // Free-coins ad button left of the balance; on narrow phones it takes the title's place.
+        var showAd = !PlayerProfile.Vip && !IsOnline;
+        var adButton = new Rect(garageCoins.x - U(8f) - U(96f), area.y, U(96f), U(36f));
+        var titleRight = showAd ? adButton.x : garageCoins.x;
+        if (titleRight - area.x >= U(110f))
+            _ui.TextFit(new Rect(area.x, area.y, titleRight - area.x - U(8f), U(32f)), "GARAGE", 22, TextAnchor.MiddleLeft, Color.white, true);
+        else if (showAd) adButton.x = area.x;
+        if (showAd) FreeCoinsButton(adButton);
         if (_ui.Button(new Rect(area.xMax - U(110f), area.y, U(110f), U(36f)), "DONE", UiKit.Look.Primary)) CloseGarage();
         CoinChip(garageCoins);
 
@@ -371,12 +414,39 @@ public sealed partial class ARDemoController
             return;
         }
 
+        GarageCondition(index, inner.x, ref y, inner.width);
         _garageTab = _ui.Segmented(new Rect(inner.x, y, inner.width, U(34f)), new[] { "STATS", "TUNE", "STYLE" }, _garageTab, 12);
         y += U(42f);
         var room = bottom - y;
         if (_garageTab == 0) GarageStats(inner.x, ref y, inner.width, room, baseSpec, spec);
         else if (_garageTab == 1) GarageTune(index, inner.x, y, inner.width, room);
         else GarageStyle(index, look, baseSpec.Body, inner.x, y, inner.width, room);
+    }
+
+    /// <summary>Condition bar and the REPAIR button: crashes and battles wear a car, and a worn car is slower.</summary>
+    private void GarageCondition(int car, float x, ref float y, float width)
+    {
+        var condition = PlayerProfile.Condition(car);
+        var row = U(34f);
+        var buttonWidth = Mathf.Min(U(140f), width * 0.4f);
+        var labelWidth = U(84f);
+        _ui.Text(new Rect(x, y, labelWidth, row), "Condition", 13, TextAnchor.MiddleLeft, Color.white);
+        var bar = new Rect(x + labelWidth, y + row * 0.5f - U(4f), width - labelWidth - buttonWidth - U(56f), U(8f));
+        _ui.Fill(bar, new Color(1f, 1f, 1f, 0.14f));
+        var tint = condition > 70 ? new Color(0.45f, 1f, 0.5f) : condition > 40 ? UiKit.AccentColor : new Color(1f, 0.35f, 0.3f);
+        _ui.Fill(new Rect(bar.x, bar.y, bar.width * condition / 100f, bar.height), tint);
+        _ui.Text(new Rect(bar.xMax + U(6f), y, U(46f), row), condition + "%", 12, TextAnchor.MiddleLeft, tint, true);
+
+        var cost = PlayerProfile.RepairCost(car);
+        var button = new Rect(x + width - buttonWidth, y, buttonWidth, row);
+        if (cost <= 0) _ui.Button(button, "LIKE NEW", UiKit.Look.Ghost, false, 11);
+        else if (_ui.Button(button, "REPAIR " + cost.ToString("N0"), PlayerProfile.Coins >= cost ? UiKit.Look.Accent : UiKit.Look.Ghost, false, 12, UiIcon.Coin))
+        {
+            if (PlayerProfile.TryRepair(car)) GarageNote("Repaired: good as new!", false);
+            else GarageNote("Not enough coins to repair. Watch an ad or race to earn more.", true);
+        }
+
+        y += row + U(8f);
     }
 
     private void GarageStats(float x, ref float y, float width, float room, CarSpec baseSpec, CarSpec spec)
@@ -1082,7 +1152,7 @@ public sealed partial class ARDemoController
         var area = SafeRect();
         var columns = Landscape ? 2 : 1;
         // Height follows the buttons that are actually shown.
-        var leftRows = 1 + (IsClient ? 0 : 2 + (_mode != GameMode.Free ? 1 : 0));
+        var leftRows = 1 + (IsClient ? 0 : 2 + (_mode != GameMode.Free ? 2 : 0));
         var rightRows = (!_virtualMode && _arena != null ? 1 : 0) + 3;
         var rowCount = columns == 2 ? Mathf.Max(leftRows, rightRows) : leftRows + rightRows;
         var panel = CenterPanel(area, columns == 2 ? U(700f) : U(420f), Mathf.Min(area.height, U(72f) + rowCount * U(52f)));
@@ -1123,6 +1193,15 @@ public sealed partial class ARDemoController
                 if (bots != GameSettings.Bots)
                 {
                     GameSettings.Bots = bots;
+                    if (_state != GameState.Racing && _state != GameState.Countdown) StartRound();
+                }
+
+                y += row + U(8f);
+                _ui.Text(new Rect(x, y, U(110f), row), "Rivals", 13, TextAnchor.MiddleLeft, Color.white);
+                var level = _ui.Segmented(new Rect(x + U(110f), y, columnWidth - U(110f), row), GameSettings.DifficultyNames, GameSettings.Difficulty, 12);
+                if (level != GameSettings.Difficulty)
+                {
+                    GameSettings.Difficulty = level;
                     if (_state != GameState.Racing && _state != GameState.Countdown) StartRound();
                 }
 
@@ -1510,11 +1589,11 @@ public sealed partial class ARDemoController
         var order = _mode == GameMode.Battle ? BattleOrder() : RaceOrder();
         var rowHeight = U(30f);
         // Offered once per round, never in LAN games (a full-screen ad pauses the session) or to VIP players.
-        var offerAd = !IsOnline && _adBonus == 0 && _roundEarned > 0 && GameAds.RewardedReady;
+        var offerAd = !IsOnline && _adBonus == 0 && _roundEarned > 0 && AdRewards.Ready;
 #if UI_CAPTURE
         offerAd |= CaptureForceAdOffer;
 #endif
-        var height = U(70f) + rowHeight * order.Count + U(114f) + (offerAd || _adBonus > 0 ? U(54f) : 0f);
+        var height = U(70f) + rowHeight * order.Count + U(136f) + (offerAd || _adBonus > 0 ? U(54f) : 0f);
         var panel = CenterPanel(area, U(420f), Mathf.Min(height, area.height));
         _ui.Panel(panel);
         var inner = Inset(panel, U(14f));
@@ -1548,6 +1627,14 @@ public sealed partial class ARDemoController
                 "+" + (_roundEarned + _adBonus) + " coins" + (PlayerProfile.Vip ? " (VIP x2)" : "") + "  •  total " + PlayerProfile.Coins.ToString("N0"), 13, TextAnchor.MiddleLeft, Color.white, true);
         }
 
+        if (!IsClient && _wearCarIndex >= 0)
+        {
+            var condition = PlayerProfile.Condition(_wearCarIndex);
+            var note = condition < 50 ? "  •  repair it in the Garage" : "";
+            _ui.Text(new Rect(inner.x, y + U(28f), inner.width, U(20f)), "Car condition " + condition + "%" + note, 12, TextAnchor.MiddleCenter,
+                condition < 50 ? new Color(1f, 0.55f, 0.45f) : UiKit.TextDim, condition < 50);
+        }
+
         var buttonY = inner.yMax - U(46f);
         var half = (inner.width - U(10f)) * 0.5f;
         var adRect = new Rect(inner.x, buttonY - U(54f), inner.width, U(46f));
@@ -1556,7 +1643,7 @@ public sealed partial class ARDemoController
         else if (offerAd && _ui.Button(adRect, "WATCH AD:  +" + _roundEarned + " COINS", UiKit.Look.Accent, false, 15, UiIcon.Play))
         {
             var bonus = _roundEarned;
-            GameAds.ShowRewarded(() =>
+            AdRewards.Show(() =>
             {
                 PlayerProfile.Earn(bonus);
                 _adBonus = bonus;

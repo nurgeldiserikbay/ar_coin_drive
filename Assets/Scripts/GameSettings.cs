@@ -33,6 +33,10 @@ public static class GameSettings
     public static OrientationSetting Orientation { get => (OrientationSetting)GetInt("Orientation", 0); set => SetInt("Orientation", (int)value); }
     public static SteeringSetting Steering { get => (SteeringSetting)GetInt("Steering", 0); set => SetInt("Steering", (int)value); }
     public static int Bots { get => Mathf.Clamp(GetInt("Bots", 1), 0, 3); set => SetInt("Bots", Mathf.Clamp(value, 0, 3)); }
+    /// <summary>CPU rival strength: 0 easy (stock cars), 1 normal, 2 hard (fast tuned cars). Prizes scale with it.</summary>
+    public static int Difficulty { get => Mathf.Clamp(GetInt("Difficulty", 1), 0, 2); set => SetInt("Difficulty", Mathf.Clamp(value, 0, 2)); }
+    public static readonly string[] DifficultyNames = { "EASY", "NORMAL", "HARD" };
+    public static readonly float[] DifficultyPrize = { 0.6f, 1f, 1.6f };
     /// <summary>The selected car's paint (each car in the garage keeps its own).</summary>
     public static int CarColor { get => Mathf.Clamp(PlayerProfile.Look(CarType).Paint, 0, CarColors.Length - 1); set => PlayerProfile.SetPaint(CarType, value); }
     public static TrackLayout Track { get => (TrackLayout)Mathf.Clamp(GetInt("Track", 0), 0, RaceTrack.LayoutNames.Length - 1); set => SetInt("Track", (int)value); }

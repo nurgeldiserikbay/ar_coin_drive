@@ -107,6 +107,7 @@ public sealed partial class ARDemoController
             car.Speed *= 0.2f;
             car.Lateral = 0f;
             if (!car.IsLocal) return;
+            _roundWear += 3f;
             ShowHint("WIPEOUT!");
             GameAudio.Instance.Play(GameAudio.Sfx.Crash, 0.8f);
             GameAudio.Haptic(90);
